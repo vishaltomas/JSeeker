@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'"
+    />
+    <title>Electron + TypeScript</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <h1>Chat</h1>
+        <p id="versions" class="versions"></p>
+      </header>
+
+      <main id="messages" class="messages"></main>
+
+      <form id="chat-form" class="chat-form">
+        <input
+          id="chat-input"
+          class="chat-input"
+          type="text"
+          placeholder="Type a message…"
+          autocomplete="off"
+        />
+        <button type="submit" class="chat-send">Send</button>
+      </form>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
