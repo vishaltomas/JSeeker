@@ -1,16 +1,36 @@
-// NOTE: This file is compiled as a plain browser script (no import/export), so
-// it must stay module-free — CommonJS output breaks in the renderer ("exports
-// is not defined") and ES modules are blocked over file://. Global `interface`
-// augmentation below works precisely because this is a script, not a module.
-type Profile = Record<string, string>;
+// NOTE: Compiled as a plain browser script (no import/export) — see the build
+// notes; CommonJS output breaks in the renderer and ESM is blocked over file://.
+type ProfileData = Record<string, string>;
+type ChatMessage = { role: "user" | "assistant"; content: string };
+
+interface ProfileRecord {
+  id: string;
+  name: string;
+  data: ProfileData;
+}
+interface Settings {
+  ollamaModel: string;
+  ollamaHost: string;
+}
+interface Store {
+  activeId: string;
+  profiles: ProfileRecord[];
+  settings: Settings;
+}
 
 interface Window {
   api: {
     versions: { node: string; chrome: string; electron: string };
-    loadProfile: () => Promise<Profile>;
-    saveProfile: (profile: Profile) => Promise<boolean>;
+    loadStore: () => Promise<Store>;
+    saveStore: (store: Store) => Promise<boolean>;
     pickResume: () => Promise<string | null>;
     attachResume: (webContentsId: number, filePath: string) => Promise<number>;
+    chat: {
+      send: (history: ChatMessage[]) => void;
+      onDelta: (cb: (text: string) => void) => void;
+      onDone: (cb: (full: string) => void) => void;
+      onError: (cb: (message: string) => void) => void;
+    };
   };
 }
 
@@ -23,7 +43,7 @@ interface WebviewElement extends HTMLElement {
   addEventListener(type: string, listener: (event: unknown) => void): void;
 }
 
-/** The editable text profile fields, in display order. */
+/** The editable profile fields, in display order. */
 const FIELDS: { key: string; label: string }[] = [
   { key: "firstName", label: "First name" },
   { key: "lastName", label: "Last name" },
@@ -41,19 +61,46 @@ const FIELDS: { key: string; label: string }[] = [
   { key: "currentCompany", label: "Current company" },
 ];
 
+// --- Element refs ---
+const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement;
+const settingsBack = document.getElementById("settings-back") as HTMLButtonElement;
+const mainView = document.getElementById("main-view") as HTMLElement;
+const settingsView = document.getElementById("settings-view") as HTMLElement;
+
+const profileSelect = document.getElementById("profile-select") as HTMLSelectElement;
 const urlInput = document.getElementById("url-input") as HTMLInputElement;
 const openBtn = document.getElementById("open-btn") as HTMLButtonElement;
 const autofillBtn = document.getElementById("autofill-btn") as HTMLButtonElement;
 const autoToggle = document.getElementById("auto-toggle") as HTMLInputElement;
-const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
-const resumeBtn = document.getElementById("resume-btn") as HTMLButtonElement;
-const resumeName = document.getElementById("resume-name") as HTMLElement;
-const formEl = document.getElementById("profile-form") as HTMLFormElement;
 const statusEl = document.getElementById("status") as HTMLElement;
 const placeholderEl = document.getElementById("placeholder") as HTMLElement;
 const view = document.getElementById("view") as WebviewElement;
 
-let resumePath = "";
+// Settings — profiles
+const profilesList = document.getElementById("profiles-list") as HTMLElement;
+const addProfileBtn = document.getElementById("add-profile") as HTMLButtonElement;
+const deleteProfileBtn = document.getElementById("delete-profile") as HTMLButtonElement;
+const profileNameInput = document.getElementById("profile-name") as HTMLInputElement;
+const profileForm = document.getElementById("profile-form") as HTMLFormElement;
+const resumeBtn = document.getElementById("resume-btn") as HTMLButtonElement;
+const resumeName = document.getElementById("resume-name") as HTMLElement;
+const saveProfileBtn = document.getElementById("save-profile") as HTMLButtonElement;
+const settingsStatus = document.getElementById("settings-status") as HTMLElement;
+
+// Settings — assistant
+const setModel = document.getElementById("set-model") as HTMLInputElement;
+const setHost = document.getElementById("set-host") as HTMLInputElement;
+const saveSettingsBtn = document.getElementById("save-settings") as HTMLButtonElement;
+const settingsGeneralStatus = document.getElementById(
+  "settings-general-status"
+) as HTMLElement;
+
+// --- State ---
+let store: Store = {
+  activeId: "default",
+  profiles: [{ id: "default", name: "Default", data: {} }],
+  settings: { ollamaModel: "", ollamaHost: "" },
+};
 let pageReady = false;
 
 function setStatus(text: string): void {
@@ -64,9 +111,59 @@ function basename(p: string): string {
   return p.split(/[\\/]/).pop() ?? p;
 }
 
-/** Build the sidebar inputs and populate them from the saved profile. */
-async function initProfileForm(): Promise<void> {
-  const profile = await window.api.loadProfile();
+function newId(): string {
+  return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function activeProfile(): ProfileRecord {
+  return (
+    store.profiles.find((p) => p.id === store.activeId) ?? store.profiles[0]
+  );
+}
+
+function persist(): void {
+  window.api.saveStore(store);
+}
+
+// --- Main view: active-profile selector ---
+function renderProfileSelect(): void {
+  profileSelect.innerHTML = "";
+  for (const p of store.profiles) {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.name || "(unnamed)";
+    profileSelect.appendChild(opt);
+  }
+  profileSelect.value = store.activeId;
+}
+
+profileSelect.addEventListener("change", () => {
+  store.activeId = profileSelect.value;
+  persist();
+});
+
+// --- Settings: profiles ---
+function renderProfilesList(): void {
+  profilesList.innerHTML = "";
+  for (const p of store.profiles) {
+    const li = document.createElement("li");
+    li.className = "profile-item" + (p.id === store.activeId ? " active" : "");
+    li.textContent = p.name || "(unnamed)";
+    li.addEventListener("click", () => {
+      store.activeId = p.id;
+      persist();
+      renderProfilesList();
+      renderProfileEditor();
+    });
+    profilesList.appendChild(li);
+  }
+}
+
+function renderProfileEditor(): void {
+  const profile = activeProfile();
+  profileNameInput.value = profile.name;
+
+  profileForm.innerHTML = "";
   for (const { key, label } of FIELDS) {
     const wrap = document.createElement("div");
     wrap.className = "field";
@@ -78,26 +175,102 @@ async function initProfileForm(): Promise<void> {
     const input = document.createElement("input");
     input.id = `f-${key}`;
     input.dataset.key = key;
-    input.value = profile[key] ?? "";
+    input.value = profile.data[key] ?? "";
 
     wrap.appendChild(lbl);
     wrap.appendChild(input);
-    formEl.appendChild(wrap);
+    profileForm.appendChild(wrap);
   }
 
-  resumePath = profile.resumePath ?? "";
-  if (resumePath) resumeName.textContent = basename(resumePath);
+  const resumePath = profile.data.resumePath ?? "";
+  resumeName.textContent = resumePath ? basename(resumePath) : "No file selected";
+  settingsStatus.textContent = "";
 }
 
-function getProfile(): Profile {
-  const profile: Profile = {};
-  formEl.querySelectorAll<HTMLInputElement>("input[data-key]").forEach((el) => {
-    profile[el.dataset.key as string] = el.value.trim();
+function saveProfileFromEditor(): void {
+  const profile = activeProfile();
+  profile.name = profileNameInput.value.trim() || "Untitled";
+  profileForm.querySelectorAll<HTMLInputElement>("input[data-key]").forEach((el) => {
+    profile.data[el.dataset.key as string] = el.value.trim();
   });
-  profile.resumePath = resumePath;
-  return profile;
+  persist();
+  renderProfilesList();
+  renderProfileSelect();
+  settingsStatus.textContent = "Profile saved.";
 }
 
+addProfileBtn.addEventListener("click", () => {
+  const record: ProfileRecord = { id: newId(), name: "New profile", data: {} };
+  store.profiles.push(record);
+  store.activeId = record.id;
+  persist();
+  renderProfilesList();
+  renderProfileEditor();
+  renderProfileSelect();
+  profileNameInput.focus();
+  profileNameInput.select();
+});
+
+deleteProfileBtn.addEventListener("click", () => {
+  if (store.profiles.length <= 1) {
+    // Keep at least one profile — reset the last one instead of removing it.
+    store.profiles = [{ id: "default", name: "Default", data: {} }];
+    store.activeId = "default";
+  } else {
+    store.profiles = store.profiles.filter((p) => p.id !== store.activeId);
+    store.activeId = store.profiles[0].id;
+  }
+  persist();
+  renderProfilesList();
+  renderProfileEditor();
+  renderProfileSelect();
+});
+
+saveProfileBtn.addEventListener("click", saveProfileFromEditor);
+
+resumeBtn.addEventListener("click", async () => {
+  const picked = await window.api.pickResume();
+  if (picked) {
+    activeProfile().data.resumePath = picked;
+    resumeName.textContent = basename(picked);
+    persist();
+    settingsStatus.textContent = "Resume selected.";
+  }
+});
+
+// --- Settings: assistant ---
+function renderAssistantSettings(): void {
+  setModel.value = store.settings.ollamaModel ?? "";
+  setHost.value = store.settings.ollamaHost ?? "";
+  settingsGeneralStatus.textContent = "";
+}
+
+saveSettingsBtn.addEventListener("click", () => {
+  store.settings.ollamaModel = setModel.value.trim();
+  store.settings.ollamaHost = setHost.value.trim();
+  persist();
+  settingsGeneralStatus.textContent = "Settings saved.";
+});
+
+// --- View switching ---
+function showSettings(): void {
+  renderProfilesList();
+  renderProfileEditor();
+  renderAssistantSettings();
+  mainView.classList.add("hidden");
+  settingsView.classList.remove("hidden");
+}
+
+function showMain(): void {
+  renderProfileSelect();
+  settingsView.classList.add("hidden");
+  mainView.classList.remove("hidden");
+}
+
+settingsBtn.addEventListener("click", showSettings);
+settingsBack.addEventListener("click", showMain);
+
+// --- URL / webview ---
 function normalizeUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
@@ -120,8 +293,8 @@ function openUrl(): void {
  * MutationObserver that re-fills fields added later (multi-step / dynamic
  * forms), then runs once and returns the number of fields filled.
  */
-function buildAutofillScript(profile: Profile, installObserver: boolean): string {
-  const enriched: Profile = { ...profile };
+function buildAutofillScript(profile: ProfileData, installObserver: boolean): string {
+  const enriched: ProfileData = { ...profile };
   enriched.fullName = [profile.firstName, profile.lastName]
     .filter(Boolean)
     .join(" ");
@@ -240,9 +413,8 @@ function buildAutofillScript(profile: Profile, installObserver: boolean): string
 }
 
 async function runFill(): Promise<number> {
-  const profile = getProfile();
   const count = await view.executeJavaScript(
-    buildAutofillScript(profile, autoToggle.checked),
+    buildAutofillScript(activeProfile().data, autoToggle.checked),
     true
   );
   return count as number;
@@ -254,6 +426,7 @@ async function autofill(): Promise<void> {
   try {
     const count = await runFill();
     let msg = `Filled ${count} field${count === 1 ? "" : "s"}.`;
+    const resumePath = activeProfile().data.resumePath;
     if (resumePath) {
       const attached = await window.api.attachResume(
         view.getWebContentsId(),
@@ -267,7 +440,6 @@ async function autofill(): Promise<void> {
   }
 }
 
-// --- Events ---
 openBtn.addEventListener("click", openUrl);
 urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") openUrl();
@@ -287,14 +459,10 @@ view.addEventListener("did-finish-load", () => {
   }
 });
 
-// In-page navigations (SPA route changes / multi-step forms) don't re-fire
-// did-finish-load, so re-fill on those too when Auto is on.
 view.addEventListener("did-navigate-in-page", () => {
   if (autoToggle.checked && pageReady) autofill();
 });
 
-// Only surface *main-frame* failures, and ignore ERR_ABORTED (-3), which is the
-// normal signal for a redirect or a superseded navigation — not a real error.
 view.addEventListener("did-fail-load", (event) => {
   const e = event as {
     errorCode: number;
@@ -311,18 +479,84 @@ view.addEventListener("render-process-gone", () => {
 
 autofillBtn.addEventListener("click", autofill);
 
-saveBtn.addEventListener("click", async () => {
-  await window.api.saveProfile(getProfile());
-  setStatus("Info saved.");
+// --- Chat with a local model ---
+const chatToggle = document.getElementById("chat-toggle") as HTMLButtonElement;
+const chatPanel = document.getElementById("chat-panel") as HTMLElement;
+const chatMessages = document.getElementById("chat-messages") as HTMLElement;
+const chatForm = document.getElementById("chat-form") as HTMLFormElement;
+const chatInput = document.getElementById("chat-input") as HTMLTextAreaElement;
+
+const chatHistory: ChatMessage[] = [];
+let streamingBubble: HTMLElement | null = null;
+let streamingText = "";
+
+function addChatBubble(text: string, kind: "user" | "assistant" | "error"): HTMLElement {
+  const bubble = document.createElement("div");
+  bubble.className = `chat-msg ${kind}`;
+  bubble.textContent = text;
+  chatMessages.appendChild(bubble);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return bubble;
+}
+
+chatToggle.addEventListener("click", () => {
+  chatPanel.classList.toggle("hidden");
+  if (!chatPanel.classList.contains("hidden")) chatInput.focus();
 });
 
-resumeBtn.addEventListener("click", async () => {
-  const picked = await window.api.pickResume();
-  if (picked) {
-    resumePath = picked;
-    resumeName.textContent = basename(picked);
-    setStatus("Resume selected. Save to remember it.");
+chatForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text || streamingBubble) return;
+
+  addChatBubble(text, "user");
+  chatHistory.push({ role: "user", content: text });
+  chatInput.value = "";
+
+  streamingText = "";
+  streamingBubble = addChatBubble("…", "assistant");
+  window.api.chat.send(chatHistory);
+});
+
+chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    chatForm.requestSubmit();
   }
 });
 
-initProfileForm();
+window.api.chat.onDelta((text) => {
+  if (!streamingBubble) return;
+  streamingText += text;
+  streamingBubble.textContent = streamingText;
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+});
+
+window.api.chat.onDone((full) => {
+  if (!streamingBubble) return;
+  const finalText = full || streamingText;
+  streamingBubble.textContent = finalText;
+  chatHistory.push({ role: "assistant", content: finalText });
+  streamingBubble = null;
+  streamingText = "";
+});
+
+window.api.chat.onError((message) => {
+  if (streamingBubble) {
+    streamingBubble.className = "chat-msg error";
+    streamingBubble.textContent = message;
+    streamingBubble = null;
+    streamingText = "";
+    if (chatHistory[chatHistory.length - 1]?.role === "user") chatHistory.pop();
+  } else {
+    addChatBubble(message, "error");
+  }
+});
+
+// --- Init ---
+async function init(): Promise<void> {
+  store = await window.api.loadStore();
+  renderProfileSelect();
+}
+
+init();

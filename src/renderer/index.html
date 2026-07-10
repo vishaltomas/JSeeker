@@ -11,54 +11,118 @@
   </head>
   <body>
     <div class="app">
-      <header class="toolbar">
+      <!-- Custom menu bar -->
+      <header class="menubar">
         <span class="brand">JSeeker</span>
-        <input
-          id="url-input"
-          class="url-input"
-          type="text"
-          placeholder="Paste a job application link and press Enter…"
-          autocomplete="off"
-        />
-        <button id="open-btn" class="btn">Open</button>
-        <label class="auto-toggle" title="Re-fill automatically as the form changes or navigates">
-          <input type="checkbox" id="auto-toggle" /> Auto
-        </label>
-        <button id="autofill-btn" class="btn btn-primary" disabled>
-          Autofill
-        </button>
+        <span class="menubar-spacer"></span>
+        <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
       </header>
 
-      <div class="body">
-        <aside class="sidebar">
-          <h2>Your Info</h2>
-          <form id="profile-form" class="profile-form"></form>
+      <!-- MAIN VIEW -->
+      <section id="main-view" class="view">
+        <div class="toolbar">
+          <select id="profile-select" class="profile-select" title="Active profile"></select>
+          <input
+            id="url-input"
+            class="url-input"
+            type="text"
+            placeholder="Paste a job application link and press Enter…"
+            autocomplete="off"
+          />
+          <button id="open-btn" class="btn">Open</button>
+          <label class="auto-toggle" title="Re-fill automatically as the form changes or navigates">
+            <input type="checkbox" id="auto-toggle" /> Auto
+          </label>
+          <button id="autofill-btn" class="btn btn-primary" disabled>Autofill</button>
+          <button id="chat-toggle" class="btn">Chat</button>
+        </div>
 
-          <div class="resume">
-            <label class="resume-label">Resume</label>
-            <div class="resume-row">
-              <span id="resume-name" class="resume-name">No file selected</span>
-              <button id="resume-btn" class="btn" type="button">Choose…</button>
+        <div class="body">
+          <main class="viewer">
+            <div id="placeholder" class="placeholder">
+              Paste an application link above to begin.
             </div>
+            <webview
+              id="view"
+              class="webview"
+              src="about:blank"
+              allowpopups
+              useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            ></webview>
+          </main>
+
+          <aside id="chat-panel" class="chat-panel hidden">
+            <div class="chat-header">Assistant <span class="chat-sub">local model</span></div>
+            <div id="chat-messages" class="chat-messages"></div>
+            <form id="chat-form" class="chat-form">
+              <textarea
+                id="chat-input"
+                class="chat-input"
+                rows="2"
+                placeholder="Ask for help with this application…"
+              ></textarea>
+              <button type="submit" class="btn btn-primary">Send</button>
+            </form>
+          </aside>
+        </div>
+
+        <div id="status" class="statusbar"></div>
+      </section>
+
+      <!-- SETTINGS VIEW -->
+      <section id="settings-view" class="view hidden">
+        <div class="settings-inner">
+          <div class="settings-head">
+            <button id="settings-back" class="btn">← Back</button>
+            <h1>Settings</h1>
           </div>
 
-          <button id="save-btn" class="btn btn-block">Save Info</button>
-          <p id="status" class="status"></p>
-        </aside>
+          <section class="settings-section">
+            <h2>Profiles</h2>
+            <p class="section-hint">Keep a separate profile for each kind of role you apply to.</p>
+            <div class="profiles-layout">
+              <div class="profiles-list-wrap">
+                <ul id="profiles-list" class="profiles-list"></ul>
+                <button id="add-profile" class="btn btn-block">+ New profile</button>
+              </div>
 
-        <main class="viewer">
-          <div id="placeholder" class="placeholder">
-            Paste an application link above to begin.
-          </div>
-          <webview
-            id="view"
-            class="webview"
-            src="about:blank"
-            allowpopups
-            useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-          ></webview>
-        </main>
-      </div>
+              <div class="profile-editor">
+                <div class="profile-editor-head">
+                  <input id="profile-name" class="profile-name" placeholder="Profile name" />
+                  <button id="delete-profile" class="btn" title="Delete this profile">Delete</button>
+                </div>
+                <form id="profile-form" class="profile-form"></form>
+
+                <div class="resume">
+                  <label class="resume-label">Resume</label>
+                  <div class="resume-row">
+                    <span id="resume-name" class="resume-name">No file selected</span>
+                    <button id="resume-btn" class="btn" type="button">Choose…</button>
+                  </div>
+                </div>
+
+                <button id="save-profile" class="btn btn-primary btn-block">Save profile</button>
+                <p id="settings-status" class="status"></p>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h2>Assistant (local model)</h2>
+            <p class="section-hint">The chat assistant runs through your local Ollama.</p>
+            <div class="field">
+              <label for="set-model">Model</label>
+              <input id="set-model" placeholder="llama3.2" />
+            </div>
+            <div class="field">
+              <label for="set-host">Host</label>
+              <input id="set-host" placeholder="http://127.0.0.1:11434" />
+            </div>
+            <button id="save-settings" class="btn btn-primary">Save settings</button>
+            <p id="settings-general-status" class="status"></p>
+          </section>
+        </div>
+      </section>
     </div>
 
     <script src="./renderer.js"></script>
