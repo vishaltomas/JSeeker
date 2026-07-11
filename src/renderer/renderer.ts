@@ -270,6 +270,22 @@ function showMain(): void {
 settingsBtn.addEventListener("click", showSettings);
 settingsBack.addEventListener("click", showMain);
 
+// Settings section navigation (sidebar).
+const settingsNavItems = document.querySelectorAll<HTMLButtonElement>(
+  ".settings-nav-item"
+);
+function showSection(name: string): void {
+  settingsNavItems.forEach((item) => {
+    item.classList.toggle("active", item.dataset.section === name);
+  });
+  document.querySelectorAll<HTMLElement>(".settings-panel").forEach((panel) => {
+    panel.classList.toggle("hidden", panel.id !== `section-${name}`);
+  });
+}
+settingsNavItems.forEach((item) => {
+  item.addEventListener("click", () => showSection(item.dataset.section ?? "profiles"));
+});
+
 // --- URL / webview ---
 function normalizeUrl(raw: string): string {
   const trimmed = raw.trim();

@@ -71,16 +71,22 @@
 
       <!-- SETTINGS VIEW -->
       <section id="settings-view" class="view hidden">
-        <div class="settings-inner">
-          <div class="settings-head">
-            <button id="settings-back" class="btn">← Back</button>
-            <h1>Settings</h1>
-          </div>
+        <div class="settings-head">
+          <button id="settings-back" class="btn">← Back</button>
+          <h1>Settings</h1>
+        </div>
 
-          <section class="settings-section">
-            <h2>Profiles</h2>
-            <p class="section-hint">Keep a separate profile for each kind of role you apply to.</p>
-            <div class="profiles-layout">
+        <div class="settings-layout">
+          <nav class="settings-nav">
+            <button class="settings-nav-item active" data-section="profiles">Profiles</button>
+            <button class="settings-nav-item" data-section="assistant">Assistant</button>
+          </nav>
+
+          <div class="settings-content">
+            <section id="section-profiles" class="settings-panel">
+              <h2>Profiles</h2>
+              <p class="section-hint">Keep a separate profile for each kind of role you apply to.</p>
+              <div class="profiles-layout">
               <div class="profiles-list-wrap">
                 <ul id="profiles-list" class="profiles-list"></ul>
                 <button id="add-profile" class="btn btn-block">+ New profile</button>
@@ -105,22 +111,23 @@
                 <p id="settings-status" class="status"></p>
               </div>
             </div>
-          </section>
+            </section>
 
-          <section class="settings-section">
-            <h2>Assistant (local model)</h2>
-            <p class="section-hint">The chat assistant runs through your local Ollama.</p>
-            <div class="field">
-              <label for="set-model">Model</label>
-              <input id="set-model" placeholder="llama3.2" />
-            </div>
-            <div class="field">
-              <label for="set-host">Host</label>
-              <input id="set-host" placeholder="http://127.0.0.1:11434" />
-            </div>
-            <button id="save-settings" class="btn btn-primary">Save settings</button>
-            <p id="settings-general-status" class="status"></p>
-          </section>
+            <section id="section-assistant" class="settings-panel hidden">
+              <h2>Assistant (local model)</h2>
+              <p class="section-hint">The chat assistant runs through your local Ollama.</p>
+              <div class="field">
+                <label for="set-model">Model</label>
+                <input id="set-model" placeholder="llama3.2" />
+              </div>
+              <div class="field">
+                <label for="set-host">Host</label>
+                <input id="set-host" placeholder="http://127.0.0.1:11434" />
+              </div>
+              <button id="save-settings" class="btn btn-primary">Save settings</button>
+              <p id="settings-general-status" class="status"></p>
+            </section>
+          </div>
         </div>
       </section>
     </div>
