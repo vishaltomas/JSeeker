@@ -2,6 +2,27 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
+/** A form field the renderer's heuristic matcher couldn't confidently label. */
+interface FieldDescriptor {
+  index: number;
+  tag: string;
+  type?: string;
+  name?: string;
+  id?: string;
+  placeholder?: string;
+  ariaLabel?: string;
+  autocomplete?: string;
+  label?: string;
+  context?: string;
+  options?: string[];
+  required?: boolean;
+}
+
+interface FieldMapping {
+  index: number;
+  value: string;
+}
+
 contextBridge.exposeInMainWorld("api", {
   versions: {
     node: process.versions.node,
@@ -11,10 +32,14 @@ contextBridge.exposeInMainWorld("api", {
   loadStore: (): Promise<unknown> => ipcRenderer.invoke("store:load"),
   saveStore: (store: unknown): Promise<boolean> =>
     ipcRenderer.invoke("store:save", store),
+  searchJobs: (query: string, location: string): Promise<unknown> =>
+    ipcRenderer.invoke("jobs:search", { query, location }),
   pickResume: (): Promise<string | null> =>
     ipcRenderer.invoke("dialog:pickResume"),
   attachResume: (webContentsId: number, filePath: string): Promise<number> =>
     ipcRenderer.invoke("resume:attach", { webContentsId, filePath }),
+  planAutofillLLM: (fields: FieldDescriptor[]): Promise<FieldMapping[]> =>
+    ipcRenderer.invoke("autofill:llm", { fields }),
   chat: {
     send: (history: ChatMessage[]): void =>
       ipcRenderer.send("chat:send", history),

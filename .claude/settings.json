@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /tmp/claude-1000/-mnt-c-Users-visha-OneDrive-Desktop-Programs-JSeeker/3ba0fea7-5e76-4f67-b1f9-48271f5badbb/scratchpad/verify)",
+      "Bash(npm init *)",
+      "Bash(npm install *)",
+      "Bash(node verify.js)",
+      "Bash(node.exe verify.js)",
+      "Bash(rm -rf /mnt/c/Users/visha/AppData/Local/Temp/jseeker-verify)",
+      "Bash(mkdir -p /mnt/c/Users/visha/AppData/Local/Temp/jseeker-verify)",
+      "Bash(cp /tmp/claude-1000/-mnt-c-Users-visha-OneDrive-Desktop-Programs-JSeeker/3ba0fea7-5e76-4f67-b1f9-48271f5badbb/scratchpad/verify/verify.js /mnt/c/Users/visha/AppData/Local/Temp/jseeker-verify/verify.js)",
+      "Read(//mnt/c/Users/visha/AppData/Local/Temp/**)"
+    ]
+  }
+}

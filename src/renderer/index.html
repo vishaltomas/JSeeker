@@ -14,6 +14,7 @@
       <!-- Custom menu bar -->
       <header class="menubar">
         <span class="brand">JSeeker</span>
+        <button id="jobs-btn" class="menubar-link">Find Jobs</button>
         <span class="menubar-spacer"></span>
         <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
       </header>
@@ -69,6 +70,32 @@
         <div id="status" class="statusbar"></div>
       </section>
 
+      <!-- JOBS VIEW -->
+      <section id="jobs-view" class="view hidden">
+        <div class="jobs-head">
+          <button id="jobs-back" class="btn">← Back</button>
+          <form id="jobs-form" class="jobs-search">
+            <input
+              id="jobs-query"
+              class="url-input"
+              type="text"
+              placeholder="Search jobs — e.g. frontend, python, product designer…"
+              autocomplete="off"
+            />
+            <input
+              id="jobs-location"
+              class="url-input jobs-location"
+              type="text"
+              placeholder="Location (needs Adzuna)"
+              autocomplete="off"
+            />
+            <button type="submit" class="btn btn-primary">Search</button>
+          </form>
+        </div>
+        <div id="jobs-status" class="jobs-status">Search to find open roles.</div>
+        <div id="jobs-results" class="jobs-results"></div>
+      </section>
+
       <!-- SETTINGS VIEW -->
       <section id="settings-view" class="view hidden">
         <div class="settings-head">
@@ -79,6 +106,7 @@
         <div class="settings-layout">
           <nav class="settings-nav">
             <button class="settings-nav-item active" data-section="profiles">Profiles</button>
+            <button class="settings-nav-item" data-section="jobsearch">Job Search</button>
             <button class="settings-nav-item" data-section="assistant">Assistant</button>
           </nav>
 
@@ -113,9 +141,57 @@
             </div>
             </section>
 
+            <section id="section-jobsearch" class="settings-panel hidden">
+              <h2>Job Search — Google Jobs (SerpApi)</h2>
+              <p class="section-hint">
+                Recommended. A SerpApi key taps Google for Jobs, which
+                aggregates LinkedIn, Indeed, Glassdoor and company boards into
+                one search. Get a free key at serpapi.com. Honors the location
+                field.
+              </p>
+              <div class="field">
+                <label for="set-serpapi-key">SerpApi key</label>
+                <input id="set-serpapi-key" autocomplete="off" />
+              </div>
+
+              <h2 style="margin-top: 22px;">Adzuna</h2>
+              <p class="section-hint">
+                Optional. Free Adzuna credentials add keyword + location search
+                (including on-site jobs). Get them at developer.adzuna.com.
+                Without any keys here, search uses remote-only sources and the
+                location field is ignored.
+              </p>
+              <div class="field">
+                <label for="set-adzuna-id">App ID</label>
+                <input id="set-adzuna-id" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="set-adzuna-key">App Key</label>
+                <input id="set-adzuna-key" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="set-adzuna-country">Country code</label>
+                <input id="set-adzuna-country" placeholder="us" autocomplete="off" />
+              </div>
+              <button id="save-jobsearch" class="btn btn-primary">Save</button>
+              <p id="settings-jobsearch-status" class="status"></p>
+            </section>
+
             <section id="section-assistant" class="settings-panel hidden">
-              <h2>Assistant (local model)</h2>
-              <p class="section-hint">The chat assistant runs through your local Ollama.</p>
+              <h2>Assistant</h2>
+              <p class="section-hint">
+                Powers the chat assistant and AI-assisted autofill (for form fields the
+                rule-based matcher can't confidently label).
+              </p>
+              <div class="field">
+                <label for="set-provider">Provider</label>
+                <select id="set-provider">
+                  <option value="ollama">Local (Ollama)</option>
+                  <option value="claude">Claude API</option>
+                </select>
+              </div>
+
+              <h2 style="margin-top: 22px;">Local model (Ollama)</h2>
               <div class="field">
                 <label for="set-model">Model</label>
                 <input id="set-model" placeholder="llama3.2" />
@@ -124,6 +200,18 @@
                 <label for="set-host">Host</label>
                 <input id="set-host" placeholder="http://127.0.0.1:11434" />
               </div>
+
+              <h2 style="margin-top: 22px;">Claude API</h2>
+              <p class="section-hint">Get a key at platform.claude.com.</p>
+              <div class="field">
+                <label for="set-claude-key">API key</label>
+                <input id="set-claude-key" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="set-claude-model">Model</label>
+                <input id="set-claude-model" placeholder="claude-opus-4-8" />
+              </div>
+
               <button id="save-settings" class="btn btn-primary">Save settings</button>
               <p id="settings-general-status" class="status"></p>
             </section>
