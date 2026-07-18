@@ -59,6 +59,14 @@ export interface FieldMapping {
   value: string;
 }
 
+/** Progress of the background bootstrap that gets the configured Ollama
+ * model running (and warmed) shortly after the app launches. */
+export type OllamaStatus =
+  | { state: "starting" }
+  | { state: "pulling"; model: string; percent: number; detail: string }
+  | { state: "ready"; model: string }
+  | { state: "error"; message: string };
+
 export interface Api {
   versions: { node: string; chrome: string; electron: string };
   loadStore: () => Promise<Store>;
@@ -67,6 +75,8 @@ export interface Api {
   pickResume: () => Promise<string | null>;
   attachResume: (webContentsId: number, filePath: string) => Promise<number>;
   planAutofillLLM: (fields: FieldDescriptor[]) => Promise<FieldMapping[]>;
+  onOllamaStatus: (cb: (status: OllamaStatus) => void) => void;
+  getOllamaStatus: () => Promise<OllamaStatus | null>;
   chat: {
     send: (history: ChatMessage[]) => void;
     onDelta: (cb: (text: string) => void) => void;

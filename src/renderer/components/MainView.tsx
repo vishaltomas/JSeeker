@@ -3,6 +3,7 @@ import type { KeyboardEvent } from "react";
 import { useWebviewAutofill } from "../hooks/useWebviewAutofill";
 import { ChatPanel } from "./ChatPanel";
 import type { Store } from "../types";
+import { btn, btnPrimary, cx, urlInput, viewSection } from "../ui";
 
 interface MainViewProps {
   visible: boolean;
@@ -23,7 +24,7 @@ export function MainView({
 
   const {
     viewRef,
-    urlInput,
+    urlInput: url,
     setUrlInput,
     autoFill,
     setAutoFill,
@@ -41,10 +42,10 @@ export function MainView({
   }
 
   return (
-    <section className={visible ? "view" : "view hidden"}>
-      <div className="toolbar">
+    <section className={viewSection(visible)}>
+      <div className="flex items-center gap-2 border-b border-line bg-surface-4 px-3.5 py-2.5">
         <select
-          className="profile-select"
+          className={cx(urlInput, "max-w-[170px] flex-shrink-0")}
           title="Active profile"
           value={store.activeId}
           onChange={(e) => onActiveIdChange(e.target.value)}
@@ -56,17 +57,20 @@ export function MainView({
           ))}
         </select>
         <input
-          className="url-input"
+          className={cx(urlInput, "flex-1")}
           placeholder="Paste a job application link and press Enter…"
           autoComplete="off"
-          value={urlInput}
+          value={url}
           onChange={(e) => setUrlInput(e.target.value)}
           onKeyDown={onUrlKeyDown}
         />
-        <button className="btn" onClick={() => openUrl()}>
+        <button className={btn} onClick={() => openUrl()}>
           Open
         </button>
-        <label className="auto-toggle" title="Re-fill automatically as the form changes or navigates">
+        <label
+          className="flex cursor-pointer items-center gap-[5px] whitespace-nowrap text-[13px] text-ink-soft"
+          title="Re-fill automatically as the form changes or navigates"
+        >
           <input
             type="checkbox"
             checked={autoFill}
@@ -74,22 +78,24 @@ export function MainView({
           />{" "}
           Auto
         </label>
-        <button className="btn btn-primary" disabled={!pageReady} onClick={autofill}>
+        <button className={btnPrimary} disabled={!pageReady} onClick={autofill}>
           Autofill
         </button>
-        <button className="btn" onClick={() => setChatOpen((v) => !v)}>
+        <button className={btn} onClick={() => setChatOpen((v) => !v)}>
           Chat
         </button>
       </div>
 
-      <div className="body">
-        <main className="viewer">
+      <div className="flex min-h-0 flex-1">
+        <main className="relative min-w-0 flex-1 bg-white">
           {!hasOpened && (
-            <div className="placeholder">Paste an application link above to begin.</div>
+            <div className="absolute inset-0 z-[2] flex items-center justify-center bg-surface-0 text-[15px] text-ink-faint">
+              Paste an application link above to begin.
+            </div>
           )}
           <webview
             ref={viewRef}
-            className="webview"
+            className="h-full w-full border-none"
             src="about:blank"
             allowpopups
             useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -99,7 +105,9 @@ export function MainView({
         <ChatPanel open={chatOpen} />
       </div>
 
-      <div className="statusbar">{status}</div>
+      <div className="min-h-[26px] border-t border-line bg-surface-2 px-3.5 py-1.5 text-xs text-ink-muted">
+        {status}
+      </div>
     </section>
   );
 }

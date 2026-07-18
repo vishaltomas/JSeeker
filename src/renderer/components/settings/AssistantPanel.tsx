@@ -1,5 +1,15 @@
 import { useState } from "react";
 import type { Store } from "../../types";
+import {
+  btnPrimary,
+  cx,
+  fieldGroup,
+  fieldInput,
+  fieldLabel,
+  panelH2,
+  sectionHint,
+  statusText,
+} from "../../ui";
 
 interface AssistantPanelProps {
   store: Store;
@@ -33,32 +43,45 @@ export function AssistantPanel({ store, persist }: AssistantPanelProps) {
 
   return (
     <section>
-      <h2>Assistant</h2>
-      <p className="section-hint">
+      <h2 className={panelH2}>Assistant</h2>
+      <p className={sectionHint}>
         Powers the chat assistant and AI-assisted autofill (for form fields the rule-based
         matcher can't confidently label).
       </p>
-      <div className="field">
-        <label htmlFor="set-provider">Provider</label>
-        <select id="set-provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
+      <div className={fieldGroup}>
+        <label className={fieldLabel} htmlFor="set-provider">
+          Provider
+        </label>
+        <select
+          className={fieldInput}
+          id="set-provider"
+          value={provider}
+          onChange={(e) => setProvider(e.target.value)}
+        >
           <option value="ollama">Local (Ollama)</option>
           <option value="claude">Claude API</option>
         </select>
       </div>
 
-      <h2 style={{ marginTop: 22 }}>Local model (Ollama)</h2>
-      <div className="field">
-        <label htmlFor="set-model">Model</label>
+      <h2 className={cx(panelH2, "mt-[22px]")}>Local model (Ollama)</h2>
+      <div className={fieldGroup}>
+        <label className={fieldLabel} htmlFor="set-model">
+          Model
+        </label>
         <input
+          className={fieldInput}
           id="set-model"
-          placeholder="llama3.2"
+          placeholder="qwen2.5:3b"
           value={ollamaModel}
           onChange={(e) => setOllamaModel(e.target.value)}
         />
       </div>
-      <div className="field">
-        <label htmlFor="set-host">Host</label>
+      <div className={fieldGroup}>
+        <label className={fieldLabel} htmlFor="set-host">
+          Host
+        </label>
         <input
+          className={fieldInput}
           id="set-host"
           placeholder="http://127.0.0.1:11434"
           value={ollamaHost}
@@ -66,20 +89,26 @@ export function AssistantPanel({ store, persist }: AssistantPanelProps) {
         />
       </div>
 
-      <h2 style={{ marginTop: 22 }}>Claude API</h2>
-      <p className="section-hint">Get a key at platform.claude.com.</p>
-      <div className="field">
-        <label htmlFor="set-claude-key">API key</label>
+      <h2 className={cx(panelH2, "mt-[22px]")}>Claude API</h2>
+      <p className={sectionHint}>Get a key at platform.claude.com.</p>
+      <div className={fieldGroup}>
+        <label className={fieldLabel} htmlFor="set-claude-key">
+          API key
+        </label>
         <input
+          className={fieldInput}
           id="set-claude-key"
           autoComplete="off"
           value={claudeKey}
           onChange={(e) => setClaudeKey(e.target.value)}
         />
       </div>
-      <div className="field">
-        <label htmlFor="set-claude-model">Model</label>
+      <div className={fieldGroup}>
+        <label className={fieldLabel} htmlFor="set-claude-model">
+          Model
+        </label>
         <input
+          className={fieldInput}
           id="set-claude-model"
           placeholder="claude-opus-4-8"
           value={claudeModel}
@@ -87,10 +116,10 @@ export function AssistantPanel({ store, persist }: AssistantPanelProps) {
         />
       </div>
 
-      <button className="btn btn-primary" onClick={save}>
+      <button className={btnPrimary} onClick={save}>
         Save settings
       </button>
-      <p className="status">{status}</p>
+      <p className={statusText}>{status}</p>
     </section>
   );
 }

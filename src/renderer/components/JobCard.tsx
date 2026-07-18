@@ -1,4 +1,5 @@
 import type { Job } from "../types";
+import { btnPrimary, cx } from "../ui";
 
 interface JobCardProps {
   job: Job;
@@ -13,30 +14,35 @@ export function JobCard({ job, onOpen }: JobCardProps) {
   const meta = [job.company, job.location, dateStr].filter(Boolean).join(" · ");
 
   return (
-    <div className="job-card">
-      <div className="job-card-top">
+    <div className="rounded-[10px] border border-line bg-surface-2 px-4 py-3.5">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="job-title">{job.title || "(untitled)"}</h3>
-          <p className="job-meta">{meta}</p>
+          <h3 className="text-[15px] font-bold text-ink">{job.title || "(untitled)"}</h3>
+          <p className="mt-[3px] text-xs text-ink-muted">{meta}</p>
         </div>
-        <button className="btn btn-primary job-open" onClick={() => onOpen(job.url)}>
+        <button className={cx(btnPrimary, "flex-shrink-0")} onClick={() => onOpen(job.url)}>
           Open &amp; fill
         </button>
       </div>
 
-      {job.description && <p className="job-desc">{job.description}</p>}
+      {job.description && (
+        <p className="mt-2.5 text-[12.5px] leading-normal text-[#b8bcc4]">{job.description}</p>
+      )}
 
       {job.tags.length > 0 && (
-        <div className="job-tags">
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
           {job.tags.map((tag, i) => (
-            <span className="job-tag" key={i}>
+            <span
+              className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] text-ink-muted"
+              key={i}
+            >
               {tag}
             </span>
           ))}
         </div>
       )}
 
-      <div className="job-source">via {job.source}</div>
+      <div className="mt-2 text-[11px] text-ink-faint">via {job.source}</div>
     </div>
   );
 }

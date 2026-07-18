@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { ProfileData, ProfileRecord, Store } from "../../types";
+import {
+  btn,
+  btnBlock,
+  btnPrimary,
+  cx,
+  fieldInput,
+  fieldLabel,
+  panelH2,
+  sectionHint,
+  statusText,
+} from "../../ui";
 
 const FIELDS: { key: string; label: string }[] = [
   { key: "firstName", label: "First name" },
@@ -33,6 +44,15 @@ function pickFields(data: ProfileData): ProfileData {
   const out: ProfileData = {};
   for (const { key } of FIELDS) out[key] = data[key] ?? "";
   return out;
+}
+
+function profileItemClass(active: boolean): string {
+  return cx(
+    "cursor-pointer rounded-lg border px-[11px] py-2.5 text-[13px]",
+    active
+      ? "border-accent bg-accent-soft text-white"
+      : "border-line bg-surface-2 text-ink-soft hover:border-[#3b3d42]"
+  );
 }
 
 interface ProfilesPanelProps {
@@ -111,48 +131,48 @@ export function ProfilesPanel({ store, persist }: ProfilesPanelProps) {
 
   return (
     <section>
-      <h2>Profiles</h2>
-      <p className="section-hint">Keep a separate profile for each kind of role you apply to.</p>
-      <div className="profiles-layout">
-        <div className="profiles-list-wrap">
-          <ul className="profiles-list">
+      <h2 className={panelH2}>Profiles</h2>
+      <p className={sectionHint}>Keep a separate profile for each kind of role you apply to.</p>
+      <div className="flex items-start gap-5">
+        <div className="w-[220px] flex-shrink-0">
+          <ul className="mb-2.5 flex list-none flex-col gap-1.5 p-0">
             {store.profiles.map((p) => (
               <li
                 key={p.id}
-                className={"profile-item" + (p.id === store.activeId ? " active" : "")}
+                className={profileItemClass(p.id === store.activeId)}
                 onClick={() => selectProfile(p.id)}
               >
                 {p.name || "(unnamed)"}
               </li>
             ))}
           </ul>
-          <button className="btn btn-block" onClick={addProfile}>
+          <button className={cx(btn, btnBlock)} onClick={addProfile}>
             + New profile
           </button>
         </div>
 
-        <div className="profile-editor">
-          <div className="profile-editor-head">
+        <div className="min-w-0 flex-1">
+          <div className="mb-3 flex gap-2">
             <input
               ref={nameInputRef}
-              className="profile-name"
+              className="flex-1 rounded-lg border border-line-input bg-surface-0 px-[11px] py-2 text-sm font-semibold text-ink focus:border-accent focus:outline-none"
               placeholder="Profile name"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-            <button className="btn" title="Delete this profile" onClick={deleteProfile}>
+            <button className={btn} title="Delete this profile" onClick={deleteProfile}>
               Delete
             </button>
           </div>
 
-          <form
-            className="profile-form"
-            onSubmit={(e: FormEvent) => e.preventDefault()}
-          >
+          <form className="grid grid-cols-2 gap-2.5" onSubmit={(e: FormEvent) => e.preventDefault()}>
             {FIELDS.map(({ key, label }) => (
-              <div className="field" key={key}>
-                <label htmlFor={`f-${key}`}>{label}</label>
+              <div key={key}>
+                <label className={fieldLabel} htmlFor={`f-${key}`}>
+                  {label}
+                </label>
                 <input
+                  className={fieldInput}
                   id={`f-${key}`}
                   value={fields[key] ?? ""}
                   onChange={(e) => setFields({ ...fields, [key]: e.target.value })}
@@ -161,22 +181,22 @@ export function ProfilesPanel({ store, persist }: ProfilesPanelProps) {
             ))}
           </form>
 
-          <div className="resume">
-            <label className="resume-label">Resume</label>
-            <div className="resume-row">
-              <span className="resume-name">
+          <div className="mt-4 border-t border-line pt-3.5">
+            <label className="mb-1.5 block text-[11px] text-ink-muted">Resume</label>
+            <div className="flex items-center gap-2">
+              <span className="flex-1 truncate text-xs text-ink-soft">
                 {resumePath ? basename(resumePath) : "No file selected"}
               </span>
-              <button className="btn" type="button" onClick={pickResume}>
+              <button className={btn} type="button" onClick={pickResume}>
                 Choose…
               </button>
             </div>
           </div>
 
-          <button className="btn btn-primary btn-block" onClick={saveProfile}>
+          <button className={cx(btnPrimary, btnBlock)} onClick={saveProfile}>
             Save profile
           </button>
-          <p className="status">{status}</p>
+          <p className={statusText}>{status}</p>
         </div>
       </div>
     </section>

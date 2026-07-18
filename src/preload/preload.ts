@@ -23,6 +23,12 @@ interface FieldMapping {
   value: string;
 }
 
+type OllamaStatus =
+  | { state: "starting" }
+  | { state: "pulling"; model: string; percent: number; detail: string }
+  | { state: "ready"; model: string }
+  | { state: "error"; message: string };
+
 contextBridge.exposeInMainWorld("api", {
   versions: {
     node: process.versions.node,
@@ -40,6 +46,11 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("resume:attach", { webContentsId, filePath }),
   planAutofillLLM: (fields: FieldDescriptor[]): Promise<FieldMapping[]> =>
     ipcRenderer.invoke("autofill:llm", { fields }),
+  onOllamaStatus: (cb: (status: OllamaStatus) => void): void => {
+    ipcRenderer.on("ollama:status", (_event, status: OllamaStatus) => cb(status));
+  },
+  getOllamaStatus: (): Promise<OllamaStatus | null> =>
+    ipcRenderer.invoke("ollama:status:get"),
   chat: {
     send: (history: ChatMessage[]): void =>
       ipcRenderer.send("chat:send", history),
