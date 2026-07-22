@@ -50,12 +50,7 @@ export function ChatPanel({ open }: ChatPanelProps) {
   }
 
   return (
-    <aside
-      className={cx(
-        "flex min-h-0 w-[340px] flex-shrink-0 flex-col border-l border-line bg-surface-2",
-        !open && "hidden"
-      )}
-    >
+    <div className={cx("flex min-h-0 flex-1 flex-col", !open && "hidden")}>
       <div className="flex items-center justify-between border-b border-line px-3.5 py-3 text-sm font-semibold text-ink">
         <span>Assistant</span>
         <button
@@ -106,6 +101,6 @@ export function ChatPanel({ open }: ChatPanelProps) {
           <Send size={16} />
         </button>
       </form>
-    </aside>
+    </div>
   );
 }

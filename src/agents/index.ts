@@ -1,9 +1,9 @@
 import { ipcMain } from "electron";
 import type { Store } from "../main/store";
 import { loadStore } from "../main/store";
-import type { ChatMessage, FieldDescriptor, FieldMapping } from "./types";
-import { chatWithOllama, planAutofillWithOllama } from "./ollama";
-import { chatWithClaude, planAutofillWithClaude } from "./claude";
+import type { AgentAction, AutopilotSnapshot, ChatMessage, FieldDescriptor, FieldMapping } from "./types";
+import { chatWithOllama, planAutofillWithOllama, planNextActionWithOllama } from "./ollama";
+import { chatWithClaude, planAutofillWithClaude, planNextActionWithClaude } from "./claude";
 
 export { bootstrapOllama } from "./ollama";
 
@@ -25,6 +25,18 @@ ipcMain.handle("autofill:llm", async (_event, args: { fields: FieldDescriptor[] 
   const store = loadStore();
   return planAutofillWithLLM(store, args.fields);
 });
+
+// Autopilot loop step: given the current page's clickable elements, ask the
+// configured provider what to do next (see agents/prompts.ts buildNextActionPrompt).
+ipcMain.handle(
+  "autopilot:next-action",
+  async (_event, args: { snapshot: AutopilotSnapshot; recentSteps: string[] }): Promise<AgentAction> => {
+    const store = loadStore();
+    return store.settings.provider === "claude"
+      ? planNextActionWithClaude(store, args.snapshot, args.recentSteps)
+      : planNextActionWithOllama(store, args.snapshot, args.recentSteps);
+  }
+);
 
 ipcMain.on("chat:send", async (event, history: ChatMessage[]) => {
   const store = loadStore();

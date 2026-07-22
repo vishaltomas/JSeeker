@@ -1,7 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Store } from "../main/store";
-import type { ChatMessage, FieldDescriptor, FieldMapping } from "./types";
-import { buildAutofillPrompt, buildSystemPrompt, parseFieldMappings } from "./prompts";
+import type { AgentAction, AutopilotSnapshot, ChatMessage, FieldDescriptor, FieldMapping } from "./types";
+import {
+  buildAutofillPrompt,
+  buildNextActionPrompt,
+  buildSystemPrompt,
+  parseAgentAction,
+  parseFieldMappings,
+} from "./prompts";
 
 export const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
 
@@ -52,6 +58,48 @@ export async function planAutofillWithClaude(
   const block = response.content.find((b) => b.type === "text");
   if (!block || block.type !== "text") return [];
   return parseFieldMappings(block.text);
+}
+
+/** Ask Claude what the autopilot loop should do next on the current page,
+ * using structured outputs so the response always matches AgentAction. */
+export async function planNextActionWithClaude(
+  store: Store,
+  snapshot: AutopilotSnapshot,
+  recentSteps: string[]
+): Promise<AgentAction> {
+  const apiKey = store.settings.anthropicApiKey;
+  if (!apiKey) {
+    return { action: "blocked", index: -1, note: "No Claude API key set. Add one in Settings → Assistant." };
+  }
+  const model = store.settings.anthropicModel || DEFAULT_CLAUDE_MODEL;
+  const client = new Anthropic({ apiKey });
+
+  const response = await client.messages.create({
+    model,
+    max_tokens: 1024,
+    messages: [{ role: "user", content: buildNextActionPrompt(store, snapshot, recentSteps) }],
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["click", "confirm_submit", "done", "blocked"] },
+            index: { type: "integer" },
+            note: { type: "string" },
+          },
+          required: ["action", "index", "note"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const block = response.content.find((b) => b.type === "text");
+  if (!block || block.type !== "text") {
+    return { action: "blocked", index: -1, note: "Claude returned no response." };
+  }
+  return parseAgentAction(block.text);
 }
 
 // Streamed chat via the Claude API: same system prompt, but the system role

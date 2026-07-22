@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useOllamaStatus } from "../../hooks/useOllamaStatus";
 import type { Store } from "../../types";
 import {
+  btn,
   btnPrimary,
   cx,
   fieldGroup,
@@ -26,8 +28,24 @@ export function AssistantPanel({ store, persist }: AssistantPanelProps) {
   const [claudeModel, setClaudeModel] = useState(store.settings.anthropicModel);
   const [status, setStatus] = useState("");
 
-  function save(): void {
-    persist({
+  const ollamaStatus = useOllamaStatus();
+  const [starting, setStarting] = useState(false);
+
+  const busy = starting || ollamaStatus?.state === "starting" || ollamaStatus?.state === "pulling";
+
+  let ollamaStatusText = "Not started yet.";
+  if (ollamaStatus?.state === "starting") {
+    ollamaStatusText = "Starting Ollama…";
+  } else if (ollamaStatus?.state === "pulling") {
+    ollamaStatusText = `Downloading ${ollamaStatus.model} — ${ollamaStatus.percent}%`;
+  } else if (ollamaStatus?.state === "ready") {
+    ollamaStatusText = `Running — ${ollamaStatus.model}`;
+  } else if (ollamaStatus?.state === "error") {
+    ollamaStatusText = ollamaStatus.message;
+  }
+
+  function buildSettings(): Store {
+    return {
       ...store,
       settings: {
         ...store.settings,
@@ -37,8 +55,24 @@ export function AssistantPanel({ store, persist }: AssistantPanelProps) {
         anthropicApiKey: claudeKey.trim(),
         anthropicModel: claudeModel.trim(),
       },
-    });
+    };
+  }
+
+  function save(): void {
+    persist(buildSettings());
     setStatus("Settings saved.");
+  }
+
+  // Persist first, so the main process starts whatever model/host is
+  // currently shown here even if "Save settings" hasn't been clicked yet.
+  async function startOllama(): Promise<void> {
+    persist(buildSettings());
+    setStarting(true);
+    try {
+      await window.api.startOllama();
+    } finally {
+      setStarting(false);
+    }
   }
 
   return (
@@ -88,6 +122,10 @@ export function AssistantPanel({ store, persist }: AssistantPanelProps) {
           onChange={(e) => setOllamaHost(e.target.value)}
         />
       </div>
+      <button className={btn} onClick={startOllama} disabled={busy}>
+        {busy ? "Starting…" : "Start Ollama"}
+      </button>
+      <p className={statusText}>{ollamaStatusText}</p>
 
       <h2 className={cx(panelH2, "mt-[22px]")}>Claude API</h2>
       <p className={sectionHint}>Get a key at platform.claude.com.</p>

@@ -57,9 +57,9 @@ export function useWebviewAutofill(
     return result as { filled: number; unfilled: FieldDescriptor[] };
   }
 
-  async function autofill(): Promise<void> {
+  async function autofill(): Promise<{ filled: number; llmFilled: number }> {
     const view = viewRef.current;
-    if (!view || !pageReadyRef.current) return;
+    if (!view || !pageReadyRef.current) return { filled: 0, llmFilled: 0 };
     setStatus("Filling fields…");
     try {
       const { filled, unfilled } = await runFill();
@@ -95,8 +95,10 @@ export function useWebviewAutofill(
         msg += ` Attached resume to ${attached} upload${attached === 1 ? "" : "s"}.`;
       }
       setStatus(msg);
+      return { filled, llmFilled };
     } catch (err) {
       setStatus("Autofill failed: " + (err as Error).message);
+      return { filled: 0, llmFilled: 0 };
     }
   }
 

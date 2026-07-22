@@ -59,6 +59,31 @@ export interface FieldMapping {
   value: string;
 }
 
+/** A clickable element the autopilot loop could act on next. `isSubmitLike`
+ * is computed in the injected page script, not by the model — it's the
+ * deterministic check that gates auto-clicking a final submit action. */
+export interface ClickableCandidate {
+  index: number;
+  tag: string;
+  text?: string;
+  ariaLabel?: string;
+  type?: string;
+  isSubmitLike: boolean;
+}
+
+export interface AutopilotSnapshot {
+  pageTitle: string;
+  candidates: ClickableCandidate[];
+  remainingRequired: string[];
+}
+
+/** One decision from the model for what the autopilot loop should do next. */
+export interface AgentAction {
+  action: "click" | "confirm_submit" | "done" | "blocked";
+  index: number;
+  note: string;
+}
+
 /** Progress of the background bootstrap that gets the configured Ollama
  * model running (and warmed) shortly after the app launches. */
 export type OllamaStatus =
@@ -75,8 +100,10 @@ export interface Api {
   pickResume: () => Promise<string | null>;
   attachResume: (webContentsId: number, filePath: string) => Promise<number>;
   planAutofillLLM: (fields: FieldDescriptor[]) => Promise<FieldMapping[]>;
+  planNextAction: (snapshot: AutopilotSnapshot, recentSteps: string[]) => Promise<AgentAction>;
   onOllamaStatus: (cb: (status: OllamaStatus) => void) => void;
   getOllamaStatus: () => Promise<OllamaStatus | null>;
+  startOllama: () => Promise<void>;
   chat: {
     send: (history: ChatMessage[]) => void;
     onDelta: (cb: (text: string) => void) => void;

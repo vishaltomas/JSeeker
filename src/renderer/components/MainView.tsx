@@ -1,7 +1,9 @@
 import { useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useWebviewAutofill } from "../hooks/useWebviewAutofill";
-import { ChatPanel } from "./ChatPanel";
+import { useAutopilot } from "../hooks/useAutopilot";
+import { SidePanel } from "./SidePanel";
+import type { SidebarTab } from "./SidePanel";
 import type { Store } from "../types";
 import { btn, btnPrimary, cx, urlInput, viewSection } from "../ui";
 
@@ -35,7 +37,27 @@ export function MainView({
     autofill,
   } = useWebviewAutofill(activeProfile, pendingUrl, onPendingUrlHandled);
 
-  const [chatOpen, setChatOpen] = useState(false);
+  const {
+    stage: autopilotStage,
+    tasks: autopilotTasks,
+    start: startAutopilot,
+    stop: stopAutopilot,
+    approveSubmit,
+    skipSubmit,
+  } = useAutopilot(viewRef, autofill);
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chat");
+  const autopilotRunning = autopilotStage === "running" || autopilotStage === "awaiting-approval";
+
+  function toggleSidebar(tab: SidebarTab): void {
+    if (sidebarOpen && sidebarTab === tab) {
+      setSidebarOpen(false);
+    } else {
+      setSidebarTab(tab);
+      setSidebarOpen(true);
+    }
+  }
 
   function onUrlKeyDown(e: KeyboardEvent<HTMLInputElement>): void {
     if (e.key === "Enter") openUrl();
@@ -69,20 +91,28 @@ export function MainView({
         </button>
         <label
           className="flex cursor-pointer items-center gap-[5px] whitespace-nowrap text-[13px] text-ink-soft"
-          title="Re-fill automatically as the form changes or navigates"
+          title={
+            autopilotRunning
+              ? "Managed by Auto-pilot while it's running"
+              : "Re-fill automatically as the form changes or navigates"
+          }
         >
           <input
             type="checkbox"
             checked={autoFill}
+            disabled={autopilotRunning}
             onChange={(e) => setAutoFill(e.target.checked)}
           />{" "}
-          Auto
+          Auto-refill
         </label>
         <button className={btnPrimary} disabled={!pageReady} onClick={autofill}>
           Autofill
         </button>
-        <button className={btn} onClick={() => setChatOpen((v) => !v)}>
+        <button className={btn} onClick={() => toggleSidebar("chat")}>
           Chat
+        </button>
+        <button className={btn} onClick={() => toggleSidebar("autopilot")}>
+          Auto-pilot
         </button>
       </div>
 
@@ -102,7 +132,18 @@ export function MainView({
           />
         </main>
 
-        <ChatPanel open={chatOpen} />
+        <SidePanel
+          open={sidebarOpen}
+          tab={sidebarTab}
+          onTabChange={setSidebarTab}
+          autopilotStage={autopilotStage}
+          autopilotTasks={autopilotTasks}
+          canStartAutopilot={pageReady && !autopilotRunning}
+          onStartAutopilot={startAutopilot}
+          onStopAutopilot={stopAutopilot}
+          onApproveAutopilot={approveSubmit}
+          onSkipAutopilot={skipSubmit}
+        />
       </div>
 
       <div className="min-h-[26px] border-t border-line bg-surface-2 px-3.5 py-1.5 text-xs text-ink-muted">

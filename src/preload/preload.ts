@@ -23,6 +23,27 @@ interface FieldMapping {
   value: string;
 }
 
+interface ClickableCandidate {
+  index: number;
+  tag: string;
+  text?: string;
+  ariaLabel?: string;
+  type?: string;
+  isSubmitLike: boolean;
+}
+
+interface AutopilotSnapshot {
+  pageTitle: string;
+  candidates: ClickableCandidate[];
+  remainingRequired: string[];
+}
+
+interface AgentAction {
+  action: "click" | "confirm_submit" | "done" | "blocked";
+  index: number;
+  note: string;
+}
+
 type OllamaStatus =
   | { state: "starting" }
   | { state: "pulling"; model: string; percent: number; detail: string }
@@ -46,11 +67,14 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("resume:attach", { webContentsId, filePath }),
   planAutofillLLM: (fields: FieldDescriptor[]): Promise<FieldMapping[]> =>
     ipcRenderer.invoke("autofill:llm", { fields }),
+  planNextAction: (snapshot: AutopilotSnapshot, recentSteps: string[]): Promise<AgentAction> =>
+    ipcRenderer.invoke("autopilot:next-action", { snapshot, recentSteps }),
   onOllamaStatus: (cb: (status: OllamaStatus) => void): void => {
     ipcRenderer.on("ollama:status", (_event, status: OllamaStatus) => cb(status));
   },
   getOllamaStatus: (): Promise<OllamaStatus | null> =>
     ipcRenderer.invoke("ollama:status:get"),
+  startOllama: (): Promise<void> => ipcRenderer.invoke("ollama:start"),
   chat: {
     send: (history: ChatMessage[]): void =>
       ipcRenderer.send("chat:send", history),

@@ -3,8 +3,14 @@ import { spawn } from "child_process";
 import type { Store } from "../main/store";
 import { loadStore } from "../main/store";
 import { getMainWindow } from "../main/window";
-import type { ChatMessage, FieldDescriptor, FieldMapping } from "./types";
-import { buildAutofillPrompt, buildSystemPrompt, parseFieldMappings } from "./prompts";
+import type { AgentAction, AutopilotSnapshot, ChatMessage, FieldDescriptor, FieldMapping } from "./types";
+import {
+  buildAutofillPrompt,
+  buildNextActionPrompt,
+  buildSystemPrompt,
+  parseAgentAction,
+  parseFieldMappings,
+} from "./prompts";
 
 export const DEFAULT_HOST = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
 // Qwen2.5 3B (Ollama's default quant is Q4_K_M) — small enough to load and run
@@ -48,6 +54,54 @@ export async function planAutofillWithOllama(
   const body = await res.json();
   const content: string = body?.message?.content ?? "";
   return parseFieldMappings(content);
+}
+
+/** Structured-output schema for AgentAction — passed as Ollama's `format`
+ * (not just the string "json") so the model's `action` is actually
+ * constrained to one of the four valid values at decode time, rather than
+ * merely being asked nicely to produce one. Smaller local models especially
+ * tend to leave loosely-requested JSON fields empty under `format: "json"`;
+ * this forces a real value. */
+const NEXT_ACTION_SCHEMA = {
+  type: "object",
+  properties: {
+    action: { type: "string", enum: ["click", "confirm_submit", "done", "blocked"] },
+    index: { type: "integer" },
+    note: { type: "string" },
+  },
+  required: ["action", "index", "note"],
+};
+
+/** Ask the local Ollama model what the autopilot loop should do next on the
+ * current page (see agents/types.ts `AgentAction`). */
+export async function planNextActionWithOllama(
+  store: Store,
+  snapshot: AutopilotSnapshot,
+  recentSteps: string[]
+): Promise<AgentAction> {
+  const host = store.settings.ollamaHost || DEFAULT_HOST;
+  const model = store.settings.ollamaModel || DEFAULT_MODEL;
+  const prompt = buildNextActionPrompt(store, snapshot, recentSteps);
+
+  const res = await fetch(`${host}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      stream: false,
+      format: NEXT_ACTION_SCHEMA,
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Ollama responded ${res.status}. ${detail}`.trim());
+  }
+
+  const body = await res.json();
+  const content: string = body?.message?.content ?? "";
+  return parseAgentAction(content);
 }
 
 function friendlyOllamaError(err: unknown, host: string, model: string): string {
@@ -247,13 +301,10 @@ async function warmModel(host: string, model: string): Promise<void> {
   }).catch(() => {});
 }
 
-export async function bootstrapOllama(): Promise<void> {
-  const store = loadStore();
-  if (store.settings.provider === "claude") return;
-
-  const host = store.settings.ollamaHost || DEFAULT_HOST;
-  const model = store.settings.ollamaModel || DEFAULT_MODEL;
-
+/** Launches Ollama if needed, pulls the model if it isn't present, then warms
+ * it — broadcasting status the whole way. Shared by the launch-time
+ * bootstrap and the manual "Start Ollama" action. */
+async function runOllamaSequence(host: string, model: string): Promise<void> {
   broadcastOllamaStatus({ state: "starting" });
 
   if (!(await ensureOllamaRunning(host))) {
@@ -277,3 +328,24 @@ export async function bootstrapOllama(): Promise<void> {
     });
   }
 }
+
+export async function bootstrapOllama(): Promise<void> {
+  const store = loadStore();
+  if (store.settings.provider === "claude") return;
+
+  const host = store.settings.ollamaHost || DEFAULT_HOST;
+  const model = store.settings.ollamaModel || DEFAULT_MODEL;
+  await runOllamaSequence(host, model);
+}
+
+// Manual trigger for the same start/pull/warm sequence, invoked from the
+// renderer (a "Start Ollama" button in Settings, or retrying after an
+// error). Runs regardless of the configured provider, using whatever
+// host/model are currently saved, so it also works before the user has
+// switched the provider to Ollama.
+ipcMain.handle("ollama:start", async () => {
+  const store = loadStore();
+  const host = store.settings.ollamaHost || DEFAULT_HOST;
+  const model = store.settings.ollamaModel || DEFAULT_MODEL;
+  await runOllamaSequence(host, model);
+});
