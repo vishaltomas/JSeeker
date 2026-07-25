@@ -44,6 +44,17 @@ interface AgentAction {
   note: string;
 }
 
+interface AccountCreateResult {
+  ok: boolean;
+  error?: string;
+}
+
+interface ResumeParseResult {
+  fields: Record<string, string>;
+  unsupported?: boolean;
+  error?: string;
+}
+
 type OllamaStatus =
   | { state: "starting" }
   | { state: "pulling"; model: string; percent: number; detail: string }
@@ -67,8 +78,19 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("resume:attach", { webContentsId, filePath }),
   planAutofillLLM: (fields: FieldDescriptor[]): Promise<FieldMapping[]> =>
     ipcRenderer.invoke("autofill:llm", { fields }),
-  planNextAction: (snapshot: AutopilotSnapshot, recentSteps: string[]): Promise<AgentAction> =>
-    ipcRenderer.invoke("autopilot:next-action", { snapshot, recentSteps }),
+  planNextAction: (
+    snapshot: AutopilotSnapshot,
+    recentSteps: string[],
+    jobContext: string
+  ): Promise<AgentAction> => ipcRenderer.invoke("autopilot:next-action", { snapshot, recentSteps, jobContext }),
+  account: {
+    create: (username: string, password: string): Promise<AccountCreateResult> =>
+      ipcRenderer.invoke("account:create", { username, password }),
+    login: (username: string, password: string): Promise<boolean> =>
+      ipcRenderer.invoke("account:login", { username, password }),
+  },
+  parseResume: (filePath: string): Promise<ResumeParseResult> =>
+    ipcRenderer.invoke("resume:parse", { filePath }),
   onOllamaStatus: (cb: (status: OllamaStatus) => void): void => {
     ipcRenderer.on("ollama:status", (_event, status: OllamaStatus) => cb(status));
   },

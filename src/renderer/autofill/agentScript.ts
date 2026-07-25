@@ -103,11 +103,68 @@ export function buildClickableSnapshotScript(): string {
 })();`;
 }
 
-/** Clicks the element tagged with the given autopilot index. */
-export function buildClickScript(index: number): string {
+/** Clicks the element tagged with the given autopilot index. Real pages
+ * (React/Vue-driven ATS forms especially) can re-render between the
+ * snapshot and this call and drop the `data-jseeker-idx` tag from the DOM
+ * node, so this falls back to re-matching the same visible text among
+ * clickable elements before giving up. Returns whether anything was
+ * actually clicked — callers must check this rather than assume success. */
+export function buildClickScript(index: number, fallbackText?: string): string {
   return `(function () {
-  const el = document.querySelector('[data-jseeker-idx="${index}"]');
+  let el = document.querySelector('[data-jseeker-idx="${index}"]');
+
+  if (!el) {
+    const wanted = ${JSON.stringify((fallbackText || "").trim().toLowerCase())};
+    if (wanted) {
+      const pool = document.querySelectorAll(
+        'button, input[type="submit"], input[type="button"], [role="button"], a'
+      );
+      for (const cand of pool) {
+        const text = (cand.tagName === "INPUT" ? cand.value : cand.textContent || "")
+          .replace(/\\s+/g, " ").trim().toLowerCase();
+        if (text && text === wanted) { el = cand; break; }
+      }
+    }
+  }
+
   if (el) el.click();
   return !!el;
+})();`;
+}
+
+/** Re-invokes `window.__jseekerCollectUnfilled` — installed by
+ * `buildAutofillScript` (script.ts), which the autopilot loop's `autofill()`
+ * call always runs first — to get a fresh `FieldDescriptor[]` of fields
+ * still empty after both the heuristic and LLM-fallback passes. Richer than
+ * `remainingRequired` above (which is just label strings): this carries the
+ * real `index`/`required`/etc. needed to ask the user and write the answer
+ * back onto the right element.
+ *
+ * Filters out anything not currently visible — script.ts's own candidate
+ * scan doesn't check visibility (multi-step forms often pre-render every
+ * step's fields in the DOM and toggle them with CSS), so without this the
+ * loop would ask about a later step's field before the user has even
+ * reached it. Matches the same visibility check `remainingRequired` above
+ * already applies. */
+export function buildCollectUnfilledScript(): string {
+  return `(function () {
+  const all = window.__jseekerCollectUnfilled ? window.__jseekerCollectUnfilled() : [];
+  function isVisible(el) {
+    if (!el) return false;
+    if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) return false;
+    const style = window.getComputedStyle(el);
+    return style.visibility !== "hidden" && style.display !== "none";
+  }
+  return all.filter((f) => isVisible(document.querySelector('[data-jseeker-idx="' + f.index + '"]')));
+})();`;
+}
+
+/** Returns the page's visible text, capped so it stays a reasonable size in
+ * a prompt. Used once per autopilot run to give the model background
+ * context about the job posting itself, not just the form fields. */
+export function buildPageTextScript(): string {
+  return `(function () {
+  const text = (document.body ? document.body.innerText : "") || "";
+  return text.replace(/[ \\t]+/g, " ").replace(/\\n{3,}/g, "\\n\\n").trim().slice(0, 1200);
 })();`;
 }

@@ -17,6 +17,8 @@ interface SidePanelProps {
   onStopAutopilot: () => void;
   onApproveAutopilot: () => void;
   onSkipAutopilot: () => void;
+  onSubmitAutopilotAnswer: (text: string) => void;
+  onSkipAutopilotAnswer: () => void;
 }
 
 const TAB_LABEL: Record<SidebarTab, string> = { chat: "Chat", autopilot: "Auto-pilot" };
@@ -36,6 +38,8 @@ export function SidePanel({
   onStopAutopilot,
   onApproveAutopilot,
   onSkipAutopilot,
+  onSubmitAutopilotAnswer,
+  onSkipAutopilotAnswer,
 }: SidePanelProps) {
   return (
     <aside
@@ -70,6 +74,8 @@ export function SidePanel({
         onStop={onStopAutopilot}
         onApprove={onApproveAutopilot}
         onSkip={onSkipAutopilot}
+        onSubmitAnswer={onSubmitAutopilotAnswer}
+        onSkipAnswer={onSkipAutopilotAnswer}
       />
     </aside>
   );

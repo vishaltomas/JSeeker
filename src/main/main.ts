@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu } from "electron";
 import * as path from "path";
 import "./store";
+import "./account";
 import "./files";
 import "./jobs";
 import { bootstrapOllama } from "../agents";

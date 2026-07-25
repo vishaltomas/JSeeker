@@ -16,6 +16,7 @@ function emptyStore(): Store {
       adzunaCountry: "us",
       serpApiKey: "",
     },
+    account: null,
   };
 }
 

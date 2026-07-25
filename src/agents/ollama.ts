@@ -3,13 +3,23 @@ import { spawn } from "child_process";
 import type { Store } from "../main/store";
 import { loadStore } from "../main/store";
 import { getMainWindow } from "../main/window";
-import type { AgentAction, AutopilotSnapshot, ChatMessage, FieldDescriptor, FieldMapping } from "./types";
+import type {
+  AgentAction,
+  AutopilotSnapshot,
+  ChatMessage,
+  FieldDescriptor,
+  FieldMapping,
+  ResumeFields,
+} from "./types";
+import { RESUME_FIELD_KEYS } from "./types";
 import {
   buildAutofillPrompt,
   buildNextActionPrompt,
+  buildResumeExtractionPrompt,
   buildSystemPrompt,
   parseAgentAction,
   parseFieldMappings,
+  parseResumeFields,
 } from "./prompts";
 
 export const DEFAULT_HOST = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
@@ -77,11 +87,12 @@ const NEXT_ACTION_SCHEMA = {
 export async function planNextActionWithOllama(
   store: Store,
   snapshot: AutopilotSnapshot,
-  recentSteps: string[]
+  recentSteps: string[],
+  jobContext: string
 ): Promise<AgentAction> {
   const host = store.settings.ollamaHost || DEFAULT_HOST;
   const model = store.settings.ollamaModel || DEFAULT_MODEL;
-  const prompt = buildNextActionPrompt(store, snapshot, recentSteps);
+  const prompt = buildNextActionPrompt(store, snapshot, recentSteps, jobContext);
 
   const res = await fetch(`${host}/api/chat`, {
     method: "POST",
@@ -102,6 +113,42 @@ export async function planNextActionWithOllama(
   const body = await res.json();
   const content: string = body?.message?.content ?? "";
   return parseAgentAction(content);
+}
+
+/** Structured-output schema for ResumeFields — every field required (empty
+ * string when unknown), same rationale as NEXT_ACTION_SCHEMA above. */
+const RESUME_FIELDS_SCHEMA = {
+  type: "object",
+  properties: Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, { type: "string" }])),
+  required: [...RESUME_FIELD_KEYS],
+};
+
+/** Ask the local Ollama model to extract profile fields from resume text
+ * during onboarding (see agents/types.ts `ResumeFields`). */
+export async function parseResumeWithOllama(store: Store, resumeText: string): Promise<ResumeFields> {
+  const host = store.settings.ollamaHost || DEFAULT_HOST;
+  const model = store.settings.ollamaModel || DEFAULT_MODEL;
+  const prompt = buildResumeExtractionPrompt(resumeText);
+
+  const res = await fetch(`${host}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      stream: false,
+      format: RESUME_FIELDS_SCHEMA,
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Ollama responded ${res.status}. ${detail}`.trim());
+  }
+
+  const body = await res.json();
+  const content: string = body?.message?.content ?? "";
+  return parseResumeFields(content);
 }
 
 function friendlyOllamaError(err: unknown, host: string, model: string): string {

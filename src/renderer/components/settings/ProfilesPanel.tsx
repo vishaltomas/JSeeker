@@ -12,23 +12,7 @@ import {
   sectionHint,
   statusText,
 } from "../../ui";
-
-const FIELDS: { key: string; label: string }[] = [
-  { key: "firstName", label: "First name" },
-  { key: "lastName", label: "Last name" },
-  { key: "email", label: "Email" },
-  { key: "phone", label: "Phone" },
-  { key: "address", label: "Street address" },
-  { key: "city", label: "City" },
-  { key: "state", label: "State / Province" },
-  { key: "zip", label: "ZIP / Postal code" },
-  { key: "country", label: "Country" },
-  { key: "linkedin", label: "LinkedIn URL" },
-  { key: "github", label: "GitHub URL" },
-  { key: "website", label: "Website / Portfolio" },
-  { key: "currentTitle", label: "Current title" },
-  { key: "currentCompany", label: "Current company" },
-];
+import { FIELDS } from "./profileFields";
 
 function newId(): string {
   return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);

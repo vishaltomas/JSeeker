@@ -50,3 +50,27 @@ export interface AgentAction {
   index: number;
   note: string;
 }
+
+/** Profile field keys the onboarding resume extractor fills in — matches
+ * ProfilesPanel.tsx's editable field list (everything but `resumePath`,
+ * which is set by the file picker itself, not extracted text). */
+export const RESUME_FIELD_KEYS = [
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "address",
+  "city",
+  "state",
+  "zip",
+  "country",
+  "linkedin",
+  "github",
+  "website",
+  "currentTitle",
+  "currentCompany",
+] as const;
+
+/** Flat, fully-required (empty string when unknown) so it maps directly onto
+ * a JSON schema for structured output — same convention as `AgentAction`. */
+export type ResumeFields = Record<(typeof RESUME_FIELD_KEYS)[number], string>;

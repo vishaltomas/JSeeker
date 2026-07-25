@@ -24,10 +24,22 @@ export interface Settings {
   serpApiKey: string;
 }
 
+/** A local account gate — see src/main/account.ts. Not a security boundary
+ * against filesystem access (store.json is plaintext JSON like everything
+ * else here); it hashes the password (scrypt + salt) so it's at least never
+ * stored/compared in plaintext, and gates casual access to the running app. */
+export interface Account {
+  username: string;
+  passwordHash: string;
+  passwordSalt: string;
+  onboarded: boolean;
+}
+
 export interface Store {
   activeId: string;
   profiles: ProfileRecord[];
   settings: Settings;
+  account: Account | null;
 }
 
 const FIELD_KEYS = [
@@ -73,6 +85,7 @@ function defaultStore(): Store {
     activeId: "default",
     profiles: [{ id: "default", name: "Default", data: emptyProfileData() }],
     settings: normalizeSettings(),
+    account: null,
   };
 }
 
@@ -86,6 +99,7 @@ export function loadStore(): Store {
     const parsed = JSON.parse(fs.readFileSync(storePath(), "utf-8")) as Store;
     if (parsed && Array.isArray(parsed.profiles) && parsed.profiles.length) {
       parsed.settings = normalizeSettings(parsed.settings);
+      parsed.account = parsed.account ?? null;
       for (const p of parsed.profiles) p.data = { ...emptyProfileData(), ...p.data };
       if (!parsed.profiles.some((p) => p.id === parsed.activeId)) {
         parsed.activeId = parsed.profiles[0].id;

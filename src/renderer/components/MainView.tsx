@@ -11,6 +11,7 @@ interface MainViewProps {
   visible: boolean;
   store: Store;
   onActiveIdChange: (id: string) => void;
+  onSaveProfileAnswer: (question: string, answer: string) => void;
   pendingUrl: string | null;
   onPendingUrlHandled: () => void;
 }
@@ -19,6 +20,7 @@ export function MainView({
   visible,
   store,
   onActiveIdChange,
+  onSaveProfileAnswer,
   pendingUrl,
   onPendingUrlHandled,
 }: MainViewProps) {
@@ -44,11 +46,16 @@ export function MainView({
     stop: stopAutopilot,
     approveSubmit,
     skipSubmit,
-  } = useAutopilot(viewRef, autofill);
+    submitAnswer,
+    skipAnswer,
+  } = useAutopilot(viewRef, autofill, onSaveProfileAnswer);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chat");
-  const autopilotRunning = autopilotStage === "running" || autopilotStage === "awaiting-approval";
+  const autopilotRunning =
+    autopilotStage === "running" ||
+    autopilotStage === "awaiting-approval" ||
+    autopilotStage === "awaiting-answer";
 
   function toggleSidebar(tab: SidebarTab): void {
     if (sidebarOpen && sidebarTab === tab) {
@@ -143,6 +150,8 @@ export function MainView({
           onStopAutopilot={stopAutopilot}
           onApproveAutopilot={approveSubmit}
           onSkipAutopilot={skipSubmit}
+          onSubmitAutopilotAnswer={submitAnswer}
+          onSkipAutopilotAnswer={skipAnswer}
         />
       </div>
 

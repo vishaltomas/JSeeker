@@ -1,12 +1,22 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Store } from "../main/store";
-import type { AgentAction, AutopilotSnapshot, ChatMessage, FieldDescriptor, FieldMapping } from "./types";
+import type {
+  AgentAction,
+  AutopilotSnapshot,
+  ChatMessage,
+  FieldDescriptor,
+  FieldMapping,
+  ResumeFields,
+} from "./types";
+import { RESUME_FIELD_KEYS } from "./types";
 import {
   buildAutofillPrompt,
   buildNextActionPrompt,
+  buildResumeExtractionPrompt,
   buildSystemPrompt,
   parseAgentAction,
   parseFieldMappings,
+  parseResumeFields,
 } from "./prompts";
 
 export const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
@@ -65,7 +75,8 @@ export async function planAutofillWithClaude(
 export async function planNextActionWithClaude(
   store: Store,
   snapshot: AutopilotSnapshot,
-  recentSteps: string[]
+  recentSteps: string[],
+  jobContext: string
 ): Promise<AgentAction> {
   const apiKey = store.settings.anthropicApiKey;
   if (!apiKey) {
@@ -77,7 +88,7 @@ export async function planNextActionWithClaude(
   const response = await client.messages.create({
     model,
     max_tokens: 1024,
-    messages: [{ role: "user", content: buildNextActionPrompt(store, snapshot, recentSteps) }],
+    messages: [{ role: "user", content: buildNextActionPrompt(store, snapshot, recentSteps, jobContext) }],
     output_config: {
       format: {
         type: "json_schema",
@@ -100,6 +111,36 @@ export async function planNextActionWithClaude(
     return { action: "blocked", index: -1, note: "Claude returned no response." };
   }
   return parseAgentAction(block.text);
+}
+
+/** Ask Claude to extract profile fields from resume text during onboarding,
+ * using structured outputs so the response always matches ResumeFields. */
+export async function parseResumeWithClaude(store: Store, resumeText: string): Promise<ResumeFields> {
+  const apiKey = store.settings.anthropicApiKey;
+  if (!apiKey) throw new Error("No Claude API key set. Add one in Settings → Assistant.");
+  const model = store.settings.anthropicModel || DEFAULT_CLAUDE_MODEL;
+  const client = new Anthropic({ apiKey });
+
+  const response = await client.messages.create({
+    model,
+    max_tokens: 1024,
+    messages: [{ role: "user", content: buildResumeExtractionPrompt(resumeText) }],
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, { type: "string" }])),
+          required: [...RESUME_FIELD_KEYS],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const block = response.content.find((b) => b.type === "text");
+  if (!block || block.type !== "text") throw new Error("Claude returned no response.");
+  return parseResumeFields(block.text);
 }
 
 // Streamed chat via the Claude API: same system prompt, but the system role

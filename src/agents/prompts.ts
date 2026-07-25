@@ -1,6 +1,7 @@
 import type { Store } from "../main/store";
 import { activeProfileData } from "../main/store";
-import type { AgentAction, AutopilotSnapshot, FieldDescriptor, FieldMapping } from "./types";
+import type { AgentAction, AutopilotSnapshot, FieldDescriptor, FieldMapping, ResumeFields } from "./types";
+import { RESUME_FIELD_KEYS } from "./types";
 
 /** System prompt seeded with the active profile so the model can help fill applications. */
 export function buildSystemPrompt(store: Store): string {
@@ -54,7 +55,8 @@ export function buildAutofillPrompt(store: Store, fields: FieldDescriptor[]): st
 export function buildNextActionPrompt(
   store: Store,
   snapshot: AutopilotSnapshot,
-  recentSteps: string[]
+  recentSteps: string[],
+  jobContext: string
 ): string {
   const data = activeProfileData(store);
   const profileLines = Object.entries(data)
@@ -66,6 +68,10 @@ export function buildNextActionPrompt(
     "You are driving a job application form, one step at a time, for the applicant below.",
     "The current page's fields have already been filled as best as possible by a separate step.",
     "Your only job here is to decide what to do next on this page.",
+    "",
+    "Job posting excerpt, captured at the start of this application (context only — use it to judge",
+    "fit/requirements, never to fabricate a field value that isn't in the applicant profile):",
+    jobContext || "(not available)",
     "",
     "Applicant profile:",
     profileText,
@@ -149,4 +155,50 @@ export function parseAgentAction(content: string): AgentAction {
     index: typeof obj.index === "number" ? obj.index : -1,
     note: typeof obj.note === "string" && obj.note.trim() ? obj.note : "(no explanation given)",
   };
+}
+
+/** Builds the onboarding prompt asking a model to extract profile fields
+ * from resume text. */
+export function buildResumeExtractionPrompt(resumeText: string): string {
+  return [
+    "Extract the applicant's profile info from the resume text below.",
+    "",
+    "Resume text:",
+    resumeText,
+    "",
+    `Fields to extract: ${RESUME_FIELD_KEYS.join(", ")}.`,
+    "Use an empty string for any field the resume doesn't clearly state.",
+    "Never invent information that isn't in the resume text.",
+    "`linkedin`/`github`/`website` should be the URL as written, if present.",
+    "`currentTitle`/`currentCompany` should reflect the most recent position.",
+  ].join("\n");
+}
+
+/** Parse a model's JSON-mode response into ResumeFields, tolerating either a
+ * bare object or one wrapping it, and filling in "" for any missing key. */
+export function parseResumeFields(content: string): ResumeFields {
+  const empty = Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, ""])) as ResumeFields;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return empty;
+  }
+
+  let obj = parsed as Record<string, unknown>;
+  if (!obj || typeof obj !== "object") return empty;
+  if (!RESUME_FIELD_KEYS.some((k) => k in obj)) {
+    const nested = Object.values(obj).find(
+      (v) => v && typeof v === "object" && RESUME_FIELD_KEYS.some((k) => k in (v as object))
+    );
+    if (nested) obj = nested as Record<string, unknown>;
+  }
+
+  const result = { ...empty };
+  for (const key of RESUME_FIELD_KEYS) {
+    const value = obj[key];
+    if (typeof value === "string") result[key] = value.trim();
+  }
+  return result;
 }

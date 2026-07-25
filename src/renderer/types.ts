@@ -18,10 +18,20 @@ export interface Settings {
   serpApiKey: string;
 }
 
+/** Local account gate — see the matching doc comment in src/main/store.ts
+ * for the security scope (a UI-level gate, not filesystem-level protection). */
+export interface Account {
+  username: string;
+  passwordHash: string;
+  passwordSalt: string;
+  onboarded: boolean;
+}
+
 export interface Store {
   activeId: string;
   profiles: ProfileRecord[];
   settings: Settings;
+  account: Account | null;
 }
 
 export interface Job {
@@ -84,6 +94,17 @@ export interface AgentAction {
   note: string;
 }
 
+export interface AccountCreateResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface ResumeParseResult {
+  fields: ProfileData;
+  unsupported?: boolean;
+  error?: string;
+}
+
 /** Progress of the background bootstrap that gets the configured Ollama
  * model running (and warmed) shortly after the app launches. */
 export type OllamaStatus =
@@ -100,7 +121,16 @@ export interface Api {
   pickResume: () => Promise<string | null>;
   attachResume: (webContentsId: number, filePath: string) => Promise<number>;
   planAutofillLLM: (fields: FieldDescriptor[]) => Promise<FieldMapping[]>;
-  planNextAction: (snapshot: AutopilotSnapshot, recentSteps: string[]) => Promise<AgentAction>;
+  planNextAction: (
+    snapshot: AutopilotSnapshot,
+    recentSteps: string[],
+    jobContext: string
+  ) => Promise<AgentAction>;
+  account: {
+    create: (username: string, password: string) => Promise<AccountCreateResult>;
+    login: (username: string, password: string) => Promise<boolean>;
+  };
+  parseResume: (filePath: string) => Promise<ResumeParseResult>;
   onOllamaStatus: (cb: (status: OllamaStatus) => void) => void;
   getOllamaStatus: () => Promise<OllamaStatus | null>;
   startOllama: () => Promise<void>;
