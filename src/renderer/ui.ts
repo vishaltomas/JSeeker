@@ -3,10 +3,10 @@ export function cx(...classes: Array<string | false | null | undefined>): string
   return classes.filter(Boolean).join(" ");
 }
 
-/** Base + hidden-toggle classes for a top-level view section (Main/Jobs/
+/** Base + hidden-toggle classes for a top-level view section (Resume/Chat/
  * Settings). These stay mounted always; visibility only toggles `hidden` so
- * state — most importantly the <webview> in MainView — survives switching
- * views instead of being torn down and recreated. */
+ * state (draft edits, chat history, etc.) survives switching views instead
+ * of being torn down and recreated. */
 export function viewSection(visible: boolean): string {
   return cx("flex min-h-0 flex-1 flex-col", !visible && "hidden");
 }

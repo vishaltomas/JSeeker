@@ -1,13 +1,43 @@
 import { app, ipcMain } from "electron";
 import * as path from "path";
 import * as fs from "fs";
+import { randomBytes } from "crypto";
 
 export type ProfileData = Record<string, string>;
+
+export interface ResumeExperience {
+  id: string;
+  title: string;
+  company: string;
+  startDate: string;
+  endDate: string;
+  bullets: string[];
+}
+
+export interface ResumeEducation {
+  id: string;
+  school: string;
+  degree: string;
+  field: string;
+  startDate: string;
+  endDate: string;
+}
+
+/** The structured parts of a resume that don't fit the flat `ProfileData`
+ * bag (arrays of entries, not single strings) — edited in ResumeView.tsx,
+ * pre-populated (best-effort) from the onboarding PDF extraction. */
+export interface StructuredResume {
+  summary: string;
+  experience: ResumeExperience[];
+  education: ResumeEducation[];
+  skills: string[];
+}
 
 export interface ProfileRecord {
   id: string;
   name: string;
   data: ProfileData;
+  resume: StructuredResume;
 }
 
 export type Provider = "ollama" | "claude";
@@ -18,10 +48,12 @@ export interface Settings {
   ollamaHost: string;
   anthropicApiKey: string;
   anthropicModel: string;
-  adzunaAppId: string;
-  adzunaAppKey: string;
-  adzunaCountry: string;
-  serpApiKey: string;
+  /** Bearer token the browser extension's local requests must present — see
+   * src/main/extensionServer.ts. Generated once and kept stable; not a
+   * secret protecting against filesystem access (store.json is plaintext
+   * like everything else here), just enough to stop other local processes
+   * or web pages from silently reading profile data or triggering fills. */
+  extensionSyncToken: string;
 }
 
 /** A local account gate — see src/main/account.ts. Not a security boundary
@@ -67,10 +99,7 @@ function normalizeSettings(s?: Partial<Settings>): Settings {
     ollamaHost: s?.ollamaHost ?? "",
     anthropicApiKey: s?.anthropicApiKey ?? "",
     anthropicModel: s?.anthropicModel ?? "",
-    adzunaAppId: s?.adzunaAppId ?? "",
-    adzunaAppKey: s?.adzunaAppKey ?? "",
-    adzunaCountry: s?.adzunaCountry ?? "us",
-    serpApiKey: s?.serpApiKey ?? "",
+    extensionSyncToken: s?.extensionSyncToken || randomBytes(16).toString("hex"),
   };
 }
 
@@ -80,10 +109,16 @@ function emptyProfileData(): ProfileData {
   return data;
 }
 
+export function emptyStructuredResume(): StructuredResume {
+  return { summary: "", experience: [], education: [], skills: [] };
+}
+
 function defaultStore(): Store {
   return {
     activeId: "default",
-    profiles: [{ id: "default", name: "Default", data: emptyProfileData() }],
+    profiles: [
+      { id: "default", name: "Default", data: emptyProfileData(), resume: emptyStructuredResume() },
+    ],
     settings: normalizeSettings(),
     account: null,
   };
@@ -100,7 +135,10 @@ export function loadStore(): Store {
     if (parsed && Array.isArray(parsed.profiles) && parsed.profiles.length) {
       parsed.settings = normalizeSettings(parsed.settings);
       parsed.account = parsed.account ?? null;
-      for (const p of parsed.profiles) p.data = { ...emptyProfileData(), ...p.data };
+      for (const p of parsed.profiles) {
+        p.data = { ...emptyProfileData(), ...p.data };
+        p.resume = p.resume ?? emptyStructuredResume();
+      }
       if (!parsed.profiles.some((p) => p.id === parsed.activeId)) {
         parsed.activeId = parsed.profiles[0].id;
       }
@@ -130,6 +168,10 @@ export function saveStore(store: Store): void {
 export function activeProfileData(store: Store): ProfileData {
   const record = store.profiles.find((p) => p.id === store.activeId) ?? store.profiles[0];
   return record ? record.data : emptyProfileData();
+}
+
+export function activeProfileRecord(store: Store): ProfileRecord {
+  return store.profiles.find((p) => p.id === store.activeId) ?? store.profiles[0];
 }
 
 ipcMain.handle("store:load", () => loadStore());

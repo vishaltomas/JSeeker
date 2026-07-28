@@ -2,55 +2,39 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
-/** A form field the renderer's heuristic matcher couldn't confidently label. */
-interface FieldDescriptor {
-  index: number;
-  tag: string;
-  type?: string;
-  name?: string;
-  id?: string;
-  placeholder?: string;
-  ariaLabel?: string;
-  autocomplete?: string;
-  label?: string;
-  context?: string;
-  options?: string[];
-  required?: boolean;
-}
-
-interface FieldMapping {
-  index: number;
-  value: string;
-}
-
-interface ClickableCandidate {
-  index: number;
-  tag: string;
-  text?: string;
-  ariaLabel?: string;
-  type?: string;
-  isSubmitLike: boolean;
-}
-
-interface AutopilotSnapshot {
-  pageTitle: string;
-  candidates: ClickableCandidate[];
-  remainingRequired: string[];
-}
-
-interface AgentAction {
-  action: "click" | "confirm_submit" | "done" | "blocked";
-  index: number;
-  note: string;
-}
-
 interface AccountCreateResult {
   ok: boolean;
   error?: string;
 }
 
+interface ResumeExperience {
+  id: string;
+  title: string;
+  company: string;
+  startDate: string;
+  endDate: string;
+  bullets: string[];
+}
+
+interface ResumeEducation {
+  id: string;
+  school: string;
+  degree: string;
+  field: string;
+  startDate: string;
+  endDate: string;
+}
+
+interface StructuredResume {
+  summary: string;
+  experience: ResumeExperience[];
+  education: ResumeEducation[];
+  skills: string[];
+}
+
 interface ResumeParseResult {
   fields: Record<string, string>;
+  resume: StructuredResume;
   unsupported?: boolean;
   error?: string;
 }
@@ -70,19 +54,8 @@ contextBridge.exposeInMainWorld("api", {
   loadStore: (): Promise<unknown> => ipcRenderer.invoke("store:load"),
   saveStore: (store: unknown): Promise<boolean> =>
     ipcRenderer.invoke("store:save", store),
-  searchJobs: (query: string, location: string): Promise<unknown> =>
-    ipcRenderer.invoke("jobs:search", { query, location }),
   pickResume: (): Promise<string | null> =>
     ipcRenderer.invoke("dialog:pickResume"),
-  attachResume: (webContentsId: number, filePath: string): Promise<number> =>
-    ipcRenderer.invoke("resume:attach", { webContentsId, filePath }),
-  planAutofillLLM: (fields: FieldDescriptor[]): Promise<FieldMapping[]> =>
-    ipcRenderer.invoke("autofill:llm", { fields }),
-  planNextAction: (
-    snapshot: AutopilotSnapshot,
-    recentSteps: string[],
-    jobContext: string
-  ): Promise<AgentAction> => ipcRenderer.invoke("autopilot:next-action", { snapshot, recentSteps, jobContext }),
   account: {
     create: (username: string, password: string): Promise<AccountCreateResult> =>
       ipcRenderer.invoke("account:create", { username, password }),
@@ -91,6 +64,7 @@ contextBridge.exposeInMainWorld("api", {
   },
   parseResume: (filePath: string): Promise<ResumeParseResult> =>
     ipcRenderer.invoke("resume:parse", { filePath }),
+  extensionInfo: (): Promise<{ port: number }> => ipcRenderer.invoke("extension:info"),
   onOllamaStatus: (cb: (status: OllamaStatus) => void): void => {
     ipcRenderer.on("ollama:status", (_event, status: OllamaStatus) => cb(status));
   },

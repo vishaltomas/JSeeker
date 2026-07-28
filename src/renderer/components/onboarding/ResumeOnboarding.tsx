@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { ProfileData, Store } from "../../types";
+import type { ProfileData, Store, StructuredResume } from "../../types";
+import { emptyResume } from "../../hooks/useAppStore";
 import { btn, btnBlock, btnPrimary, cx, fieldInput, fieldLabel, statusText } from "../../ui";
 import { FIELDS } from "../settings/profileFields";
 
@@ -16,15 +17,18 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
   const [stage, setStage] = useState<"upload" | "review">("upload");
   const [filePath, setFilePath] = useState<string | null>(null);
   const [fields, setFields] = useState<ProfileData>({});
+  const [resume, setResume] = useState<StructuredResume>(emptyResume());
   const [unsupported, setUnsupported] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
   const activeProfile = store.profiles.find((p) => p.id === store.activeId) ?? store.profiles[0];
 
-  function finishOnboarding(extraData?: ProfileData): void {
+  function finishOnboarding(extraData?: ProfileData, extraResume?: StructuredResume): void {
     const profiles = store.profiles.map((p) =>
-      p.id === activeProfile.id ? { ...p, data: { ...p.data, ...(extraData ?? {}) } } : p
+      p.id === activeProfile.id
+        ? { ...p, data: { ...p.data, ...(extraData ?? {}) }, resume: extraResume ?? p.resume }
+        : p
     );
     persist({
       ...store,
@@ -45,11 +49,14 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
       if (result.unsupported) {
         setUnsupported(true);
         setFields({});
+        setResume(emptyResume());
       } else if (result.error) {
         setStatus(result.error);
         setFields(result.fields);
+        setResume(result.resume);
       } else {
         setFields(result.fields);
+        setResume(result.resume);
       }
     } finally {
       setBusy(false);
@@ -61,7 +68,7 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
     const trimmed: ProfileData = {};
     for (const key of Object.keys(fields)) trimmed[key] = fields[key].trim();
     if (filePath) trimmed.resumePath = filePath;
-    finishOnboarding(trimmed);
+    finishOnboarding(trimmed, resume);
   }
 
   return (

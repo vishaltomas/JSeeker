@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Store } from "../types";
+import type { Store, StructuredResume } from "../types";
+
+export function emptyResume(): StructuredResume {
+  return { summary: "", experience: [], education: [], skills: [] };
+}
 
 function emptyStore(): Store {
   return {
     activeId: "default",
-    profiles: [{ id: "default", name: "Default", data: {} }],
+    profiles: [{ id: "default", name: "Default", data: {}, resume: emptyResume() }],
     settings: {
       provider: "ollama",
       ollamaModel: "",
       ollamaHost: "",
       anthropicApiKey: "",
       anthropicModel: "",
-      adzunaAppId: "",
-      adzunaAppKey: "",
-      adzunaCountry: "us",
-      serpApiKey: "",
+      extensionSyncToken: "",
     },
     account: null,
   };
@@ -38,5 +39,14 @@ export function useAppStore() {
     window.api.saveStore(next);
   }, []);
 
-  return { store, persist, loaded };
+  // Some writes (account:create) happen entirely in the main process — via
+  // their own IPC handler, not `persist` — so local state has no way to
+  // know about them on its own. Re-reading the store picks up whatever the
+  // main process just wrote.
+  const reload = useCallback(async () => {
+    const fresh = await window.api.loadStore();
+    setStore(fresh);
+  }, []);
+
+  return { store, persist, loaded, reload };
 }

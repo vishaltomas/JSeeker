@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { ProfileData, ProfileRecord, Store } from "../../types";
+import { emptyResume } from "../../hooks/useAppStore";
 import {
   btn,
   btnBlock,
@@ -66,7 +67,7 @@ export function ProfilesPanel({ store, persist }: ProfilesPanelProps) {
   }
 
   function addProfile(): void {
-    const record: ProfileRecord = { id: newId(), name: "New profile", data: {} };
+    const record: ProfileRecord = { id: newId(), name: "New profile", data: {}, resume: emptyResume() };
     persist({ ...store, profiles: [...store.profiles, record], activeId: record.id });
     requestAnimationFrame(() => {
       nameInputRef.current?.focus();
@@ -78,7 +79,7 @@ export function ProfilesPanel({ store, persist }: ProfilesPanelProps) {
     if (store.profiles.length <= 1) {
       persist({
         ...store,
-        profiles: [{ id: "default", name: "Default", data: {} }],
+        profiles: [{ id: "default", name: "Default", data: {}, resume: emptyResume() }],
         activeId: "default",
       });
       return;

@@ -1,30 +1,10 @@
-import type { FieldMapping, ProfileData } from "../types";
+// Injected on demand (via chrome.scripting.executeScript) when the user
+// clicks the extension icon. Defines two idempotent globals background.js
+// calls directly — a direct port of the heuristic matcher that used to run
+// inside JSeeker's embedded webview (src/renderer/autofill/script.ts, now
+// removed from the app since form-filling moved here).
 
-/**
- * Returns a self-contained script (as a string) that runs inside the loaded
- * page. It installs persistent fill/extract/apply routines on `window`,
- * optionally a MutationObserver that re-fills fields added later (multi-step /
- * dynamic forms), then runs the heuristic matcher once.
- *
- * Returns `{ filled, unfilled }`: how many fields the heuristic matched by
- * name/label/placeholder, and a list of leftover fields (tag, label, nearby
- * text, select options, …) it couldn't confidently label — the caller sends
- * those to the local model as a fallback.
- */
-export function buildAutofillScript(
-  profile: ProfileData,
-  installObserver: boolean
-): string {
-  const enriched: ProfileData = { ...profile };
-  enriched.fullName = [profile.firstName, profile.lastName]
-    .filter(Boolean)
-    .join(" ");
-
-  return `(function () {
-  window.__jseekerProfile = ${JSON.stringify(enriched)};
-
-  // Each spec maps a profile key to substrings that identify the field.
-  // Order matters: more specific specs come first.
+(function () {
   const SPECS = [
     { key: "email", match: ["email", "e-mail"] },
     { key: "phone", match: ["phone", "mobile", "telephone", "tel"] },
@@ -41,6 +21,8 @@ export function buildAutofillScript(
     { key: "country", match: ["country"] },
     { key: "currentTitle", match: ["current title", "job title", "position", "role", "title"] },
     { key: "currentCompany", match: ["current company", "employer", "company", "organization", "organisation"] },
+    { key: "summary", match: ["summary", "about you", "bio", "professional summary"] },
+    { key: "skills", match: ["skills", "key skills", "core competencies"] },
   ];
 
   const SKIP_TYPES = ["password", "hidden", "file", "submit", "button", "checkbox", "radio", "image", "reset"];
@@ -50,12 +32,12 @@ export function buildAutofillScript(
     if (el.labels) { for (const l of el.labels) text += " " + l.textContent; }
     const labelledby = el.getAttribute("aria-labelledby");
     if (labelledby) {
-      for (const id of labelledby.split(/\\s+/)) {
+      for (const id of labelledby.split(/\s+/)) {
         const ref = document.getElementById(id);
         if (ref) text += " " + ref.textContent;
       }
     }
-    return text.replace(/\\s+/g, " ").trim();
+    return text.replace(/\s+/g, " ").trim();
   }
 
   function haystack(el) {
@@ -97,8 +79,10 @@ export function buildAutofillScript(
     });
   }
 
-  window.__jseekerRun = function () {
-    const profile = window.__jseekerProfile || {};
+  /** Heuristic fill pass, then collects a FieldDescriptor[] for whatever's
+   * still unfilled (capped at 40) — same shape the app's LLM-fallback
+   * matching (POST /autofill) expects. */
+  window.__jseekerFill = function (profile) {
     let filled = 0;
 
     candidates().forEach((el) => {
@@ -124,19 +108,13 @@ export function buildAutofillScript(
       }
     });
 
-    return filled;
-  };
-
-  // Fields the heuristic above couldn't confidently label, described for the
-  // local model. Capped so the prompt stays a reasonable size on huge forms.
-  window.__jseekerCollectUnfilled = function () {
     if (!window.__jseekerIdxSeq) window.__jseekerIdxSeq = 0;
-    const out = [];
+    const unfilled = [];
 
     for (const el of candidates()) {
       if (el.dataset.jseekerFilled === "1") continue;
       if (el.value && el.value.trim()) continue;
-      if (out.length >= 40) break;
+      if (unfilled.length >= 40) break;
 
       if (!el.dataset.jseekerIdx) el.dataset.jseekerIdx = String(window.__jseekerIdxSeq++);
 
@@ -151,21 +129,21 @@ export function buildAutofillScript(
         ariaLabel: el.getAttribute("aria-label") || undefined,
         autocomplete: el.getAttribute("autocomplete") || undefined,
         label: labelText(el) || undefined,
-        context: context ? context.textContent.replace(/\\s+/g, " ").trim().slice(0, 160) : undefined,
+        context: context ? context.textContent.replace(/\s+/g, " ").trim().slice(0, 160) : undefined,
         required: el.required || undefined,
       };
       if (el.tagName === "SELECT") {
         descriptor.options = Array.from(el.options).map((o) => o.text).slice(0, 25);
       }
-      out.push(descriptor);
+      unfilled.push(descriptor);
     }
 
-    return out;
+    return { filled, unfilled };
   };
 
-  // Applies an { index, value }[] mapping (from the local model) back onto
-  // the elements tagged with data-jseeker-idx by __jseekerCollectUnfilled.
-  window.__jseekerApplyMapping = function (mapping) {
+  /** Applies a FieldMapping[] (from POST /autofill) back onto the elements
+   * tagged with data-jseeker-idx by __jseekerFill. Returns how many landed. */
+  window.__jseekerApply = function (mapping) {
     let applied = 0;
     for (const item of mapping) {
       const el = document.querySelector('[data-jseeker-idx="' + item.index + '"]');
@@ -180,22 +158,4 @@ export function buildAutofillScript(
     }
     return applied;
   };
-
-  if (${installObserver ? "true" : "false"} && !window.__jseekerObserver) {
-    let timer;
-    window.__jseekerObserver = new MutationObserver(() => {
-      clearTimeout(timer);
-      timer = setTimeout(() => { try { window.__jseekerRun(); } catch (e) {} }, 400);
-    });
-    window.__jseekerObserver.observe(document.documentElement, { childList: true, subtree: true });
-  }
-
-  return { filled: window.__jseekerRun(), unfilled: window.__jseekerCollectUnfilled() };
-})();`;
-}
-
-/** Applies a model-produced field mapping inside the page via the routine
- * `buildAutofillScript` installed on `window.__jseekerApplyMapping`. */
-export function buildApplyMappingScript(mapping: FieldMapping[]): string {
-  return `window.__jseekerApplyMapping(${JSON.stringify(mapping)});`;
-}
+})();

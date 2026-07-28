@@ -3,9 +3,9 @@ import * as path from "path";
 import "./store";
 import "./account";
 import "./files";
-import "./jobs";
 import { bootstrapOllama } from "../agents";
 import { setMainWindow } from "./window";
+import { startExtensionServer } from "./extensionServer";
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -15,7 +15,6 @@ function createWindow(): void {
       preload: path.join(__dirname, "../preload/preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true,
     },
   });
 
@@ -31,6 +30,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null); // remove the app menu bar entirely
   createWindow();
   bootstrapOllama(); // fire-and-forget: get the local model running in the background
+  startExtensionServer(); // fire-and-forget: local HTTP server for the companion browser extension
 });
 
 app.on("window-all-closed", () => {

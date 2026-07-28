@@ -3,23 +3,14 @@ import { spawn } from "child_process";
 import type { Store } from "../main/store";
 import { loadStore } from "../main/store";
 import { getMainWindow } from "../main/window";
-import type {
-  AgentAction,
-  AutopilotSnapshot,
-  ChatMessage,
-  FieldDescriptor,
-  FieldMapping,
-  ResumeFields,
-} from "./types";
-import { RESUME_FIELD_KEYS } from "./types";
+import type { ChatMessage, FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
+import { RESUME_FIELD_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
 import {
   buildAutofillPrompt,
-  buildNextActionPrompt,
   buildResumeExtractionPrompt,
   buildSystemPrompt,
-  parseAgentAction,
   parseFieldMappings,
-  parseResumeFields,
+  parseResumeExtraction,
 } from "./prompts";
 
 export const DEFAULT_HOST = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
@@ -29,8 +20,9 @@ export const DEFAULT_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:3b";
 
 /**
  * Ask the local Ollama model to map leftover, unrecognized form fields to
- * values from the active profile — a fallback for fields the renderer's
- * heuristic matcher couldn't confidently label.
+ * values from the active profile — the fallback the browser extension calls
+ * (via src/main/extensionServer.ts) for fields its own heuristic matcher
+ * couldn't confidently label.
  */
 export async function planAutofillWithOllama(
   store: Store,
@@ -66,66 +58,23 @@ export async function planAutofillWithOllama(
   return parseFieldMappings(content);
 }
 
-/** Structured-output schema for AgentAction — passed as Ollama's `format`
- * (not just the string "json") so the model's `action` is actually
- * constrained to one of the four valid values at decode time, rather than
- * merely being asked nicely to produce one. Smaller local models especially
- * tend to leave loosely-requested JSON fields empty under `format: "json"`;
- * this forces a real value. */
-const NEXT_ACTION_SCHEMA = {
+/** Structured-output schema for ResumeExtraction — every field required
+ * (empty string/array when unknown). Smaller local models especially tend
+ * to leave loosely-requested JSON fields empty under `format: "json"`; a
+ * full schema forces real (if empty) values instead of an omitted key. */
+const RESUME_EXTRACTION_SCHEMA = {
   type: "object",
   properties: {
-    action: { type: "string", enum: ["click", "confirm_submit", "done", "blocked"] },
-    index: { type: "integer" },
-    note: { type: "string" },
+    ...Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, { type: "string" }])),
+    ...RESUME_STRUCTURE_SCHEMA_PROPERTIES,
   },
-  required: ["action", "index", "note"],
+  required: [...RESUME_FIELD_KEYS, ...RESUME_STRUCTURE_KEYS],
 };
 
-/** Ask the local Ollama model what the autopilot loop should do next on the
- * current page (see agents/types.ts `AgentAction`). */
-export async function planNextActionWithOllama(
-  store: Store,
-  snapshot: AutopilotSnapshot,
-  recentSteps: string[],
-  jobContext: string
-): Promise<AgentAction> {
-  const host = store.settings.ollamaHost || DEFAULT_HOST;
-  const model = store.settings.ollamaModel || DEFAULT_MODEL;
-  const prompt = buildNextActionPrompt(store, snapshot, recentSteps, jobContext);
-
-  const res = await fetch(`${host}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      stream: false,
-      format: NEXT_ACTION_SCHEMA,
-    }),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Ollama responded ${res.status}. ${detail}`.trim());
-  }
-
-  const body = await res.json();
-  const content: string = body?.message?.content ?? "";
-  return parseAgentAction(content);
-}
-
-/** Structured-output schema for ResumeFields — every field required (empty
- * string when unknown), same rationale as NEXT_ACTION_SCHEMA above. */
-const RESUME_FIELDS_SCHEMA = {
-  type: "object",
-  properties: Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, { type: "string" }])),
-  required: [...RESUME_FIELD_KEYS],
-};
-
-/** Ask the local Ollama model to extract profile fields from resume text
- * during onboarding (see agents/types.ts `ResumeFields`). */
-export async function parseResumeWithOllama(store: Store, resumeText: string): Promise<ResumeFields> {
+/** Ask the local Ollama model to extract profile fields and structured
+ * resume sections from resume text during onboarding (see agents/types.ts
+ * `ResumeExtraction`). */
+export async function parseResumeWithOllama(store: Store, resumeText: string): Promise<ResumeExtraction> {
   const host = store.settings.ollamaHost || DEFAULT_HOST;
   const model = store.settings.ollamaModel || DEFAULT_MODEL;
   const prompt = buildResumeExtractionPrompt(resumeText);
@@ -137,7 +86,7 @@ export async function parseResumeWithOllama(store: Store, resumeText: string): P
       model,
       messages: [{ role: "user", content: prompt }],
       stream: false,
-      format: RESUME_FIELDS_SCHEMA,
+      format: RESUME_EXTRACTION_SCHEMA,
     }),
   });
 
@@ -148,7 +97,7 @@ export async function parseResumeWithOllama(store: Store, resumeText: string): P
 
   const body = await res.json();
   const content: string = body?.message?.content ?? "";
-  return parseResumeFields(content);
+  return parseResumeExtraction(content);
 }
 
 function friendlyOllamaError(err: unknown, host: string, model: string): string {

@@ -1,20 +1,19 @@
 import { useState } from "react";
 import { useAppStore } from "./hooks/useAppStore";
 import { Header } from "./components/Header";
-import { MainView } from "./components/MainView";
-import { JobsView } from "./components/JobsView";
+import { ResumeView } from "./components/ResumeView";
+import { ChatView } from "./components/ChatView";
 import { SettingsView } from "./components/SettingsView";
 import { FooterBar } from "./components/FooterBar";
 import { CreateAccountScreen } from "./components/onboarding/CreateAccountScreen";
 import { LoginScreen } from "./components/onboarding/LoginScreen";
 import { ResumeOnboarding } from "./components/onboarding/ResumeOnboarding";
 
-type View = "main" | "jobs" | "settings";
+type View = "resume" | "chat" | "settings";
 
 export default function App() {
-  const { store, persist, loaded } = useAppStore();
-  const [view, setView] = useState<View>("main");
-  const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const { store, persist, loaded, reload } = useAppStore();
+  const [view, setView] = useState<View>("resume");
   // Not persisted — every launch starts locked again until the password is
   // entered (or, right after creating an account, we already know it's you).
   const [unlocked, setUnlocked] = useState(false);
@@ -22,7 +21,14 @@ export default function App() {
   if (!loaded) return null;
 
   if (!store.account) {
-    return <CreateAccountScreen onCreated={() => setUnlocked(true)} />;
+    return (
+      <CreateAccountScreen
+        onCreated={async () => {
+          await reload();
+          setUnlocked(true);
+        }}
+      />
+    );
   }
   if (!unlocked) {
     return <LoginScreen username={store.account.username} onUnlocked={() => setUnlocked(true)} />;
@@ -31,38 +37,19 @@ export default function App() {
     return <ResumeOnboarding store={store} persist={persist} />;
   }
 
-  function openJob(url: string): void {
-    setPendingUrl(url);
-    setView("main");
-  }
-
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface-0 font-sans text-ink">
-      <Header onFindJobs={() => setView("jobs")} onOpenSettings={() => setView("settings")} />
+      <Header view={view} onNavigate={setView} onOpenSettings={() => setView("settings")} />
 
-      {/* Every view stays mounted and is only hidden via CSS: the <webview> in
-          MainView must never unmount, or switching views would reload the page. */}
-      <MainView
-        visible={view === "main"}
-        store={store}
-        onActiveIdChange={(id) => persist({ ...store, activeId: id })}
-        onSaveProfileAnswer={(question, answer) =>
-          persist({
-            ...store,
-            profiles: store.profiles.map((p) =>
-              p.id === store.activeId ? { ...p, data: { ...p.data, [question]: answer } } : p
-            ),
-          })
-        }
-        pendingUrl={pendingUrl}
-        onPendingUrlHandled={() => setPendingUrl(null)}
-      />
-      <JobsView visible={view === "jobs"} onBack={() => setView("main")} onOpenJob={openJob} />
+      {/* Every view stays mounted and is only hidden via CSS, so draft edits
+          (Resume) and chat history survive switching views. */}
+      <ResumeView visible={view === "resume"} store={store} persist={persist} />
+      <ChatView visible={view === "chat"} />
       <SettingsView
         visible={view === "settings"}
         store={store}
         persist={persist}
-        onBack={() => setView("main")}
+        onBack={() => setView("resume")}
       />
 
       <FooterBar store={store} />

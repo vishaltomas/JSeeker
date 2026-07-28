@@ -1,11 +1,11 @@
 import { useState } from "react";
 import type { Store } from "../types";
 import { ProfilesPanel } from "./settings/ProfilesPanel";
-import { JobSearchPanel } from "./settings/JobSearchPanel";
 import { AssistantPanel } from "./settings/AssistantPanel";
+import { ExtensionPanel } from "./settings/ExtensionPanel";
 import { btn, cx, viewSection } from "../ui";
 
-type Section = "profiles" | "jobsearch" | "assistant";
+type Section = "profiles" | "assistant" | "extension";
 
 interface SettingsViewProps {
   visible: boolean;
@@ -39,16 +39,16 @@ export function SettingsView({ visible, store, persist, onBack }: SettingsViewPr
             Profiles
           </button>
           <button
-            className={navItemClass(section === "jobsearch")}
-            onClick={() => setSection("jobsearch")}
-          >
-            Job Search
-          </button>
-          <button
             className={navItemClass(section === "assistant")}
             onClick={() => setSection("assistant")}
           >
             Assistant
+          </button>
+          <button
+            className={navItemClass(section === "extension")}
+            onClick={() => setSection("extension")}
+          >
+            Extension
           </button>
         </nav>
 
@@ -58,11 +58,11 @@ export function SettingsView({ visible, store, persist, onBack }: SettingsViewPr
           <div className={cx(section !== "profiles" && "hidden")}>
             <ProfilesPanel store={store} persist={persist} />
           </div>
-          <div className={cx(section !== "jobsearch" && "hidden")}>
-            <JobSearchPanel store={store} persist={persist} />
-          </div>
           <div className={cx(section !== "assistant" && "hidden")}>
             <AssistantPanel store={store} persist={persist} />
+          </div>
+          <div className={cx(section !== "extension" && "hidden")}>
+            <ExtensionPanel store={store} persist={persist} />
           </div>
         </div>
       </div>

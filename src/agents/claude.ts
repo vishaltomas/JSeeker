@@ -1,22 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Store } from "../main/store";
-import type {
-  AgentAction,
-  AutopilotSnapshot,
-  ChatMessage,
-  FieldDescriptor,
-  FieldMapping,
-  ResumeFields,
-} from "./types";
-import { RESUME_FIELD_KEYS } from "./types";
+import type { ChatMessage, FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
+import { RESUME_FIELD_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
 import {
   buildAutofillPrompt,
-  buildNextActionPrompt,
   buildResumeExtractionPrompt,
   buildSystemPrompt,
-  parseAgentAction,
   parseFieldMappings,
-  parseResumeFields,
+  parseResumeExtraction,
 } from "./prompts";
 
 export const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
@@ -24,7 +15,9 @@ export const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
 /**
  * Ask Claude to map leftover, unrecognized form fields to values from the
  * active profile, using structured outputs so the response is always a
- * schema-valid mapping list.
+ * schema-valid mapping list — the fallback the browser extension calls (via
+ * src/main/extensionServer.ts) for fields its own heuristic matcher
+ * couldn't confidently label.
  */
 export async function planAutofillWithClaude(
   store: Store,
@@ -70,52 +63,10 @@ export async function planAutofillWithClaude(
   return parseFieldMappings(block.text);
 }
 
-/** Ask Claude what the autopilot loop should do next on the current page,
- * using structured outputs so the response always matches AgentAction. */
-export async function planNextActionWithClaude(
-  store: Store,
-  snapshot: AutopilotSnapshot,
-  recentSteps: string[],
-  jobContext: string
-): Promise<AgentAction> {
-  const apiKey = store.settings.anthropicApiKey;
-  if (!apiKey) {
-    return { action: "blocked", index: -1, note: "No Claude API key set. Add one in Settings → Assistant." };
-  }
-  const model = store.settings.anthropicModel || DEFAULT_CLAUDE_MODEL;
-  const client = new Anthropic({ apiKey });
-
-  const response = await client.messages.create({
-    model,
-    max_tokens: 1024,
-    messages: [{ role: "user", content: buildNextActionPrompt(store, snapshot, recentSteps, jobContext) }],
-    output_config: {
-      format: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: {
-            action: { type: "string", enum: ["click", "confirm_submit", "done", "blocked"] },
-            index: { type: "integer" },
-            note: { type: "string" },
-          },
-          required: ["action", "index", "note"],
-          additionalProperties: false,
-        },
-      },
-    },
-  });
-
-  const block = response.content.find((b) => b.type === "text");
-  if (!block || block.type !== "text") {
-    return { action: "blocked", index: -1, note: "Claude returned no response." };
-  }
-  return parseAgentAction(block.text);
-}
-
-/** Ask Claude to extract profile fields from resume text during onboarding,
- * using structured outputs so the response always matches ResumeFields. */
-export async function parseResumeWithClaude(store: Store, resumeText: string): Promise<ResumeFields> {
+/** Ask Claude to extract profile fields and structured resume sections from
+ * resume text during onboarding, using structured outputs so the response
+ * always matches ResumeExtraction. */
+export async function parseResumeWithClaude(store: Store, resumeText: string): Promise<ResumeExtraction> {
   const apiKey = store.settings.anthropicApiKey;
   if (!apiKey) throw new Error("No Claude API key set. Add one in Settings → Assistant.");
   const model = store.settings.anthropicModel || DEFAULT_CLAUDE_MODEL;
@@ -123,15 +74,18 @@ export async function parseResumeWithClaude(store: Store, resumeText: string): P
 
   const response = await client.messages.create({
     model,
-    max_tokens: 1024,
+    max_tokens: 2048,
     messages: [{ role: "user", content: buildResumeExtractionPrompt(resumeText) }],
     output_config: {
       format: {
         type: "json_schema",
         schema: {
           type: "object",
-          properties: Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, { type: "string" }])),
-          required: [...RESUME_FIELD_KEYS],
+          properties: {
+            ...Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, { type: "string" }])),
+            ...RESUME_STRUCTURE_SCHEMA_PROPERTIES,
+          },
+          required: [...RESUME_FIELD_KEYS, ...RESUME_STRUCTURE_KEYS],
           additionalProperties: false,
         },
       },
@@ -140,7 +94,7 @@ export async function parseResumeWithClaude(store: Store, resumeText: string): P
 
   const block = response.content.find((b) => b.type === "text");
   if (!block || block.type !== "text") throw new Error("Claude returned no response.");
-  return parseResumeFields(block.text);
+  return parseResumeExtraction(block.text);
 }
 
 // Streamed chat via the Claude API: same system prompt, but the system role
