@@ -3,6 +3,10 @@ import * as path from "path";
 import * as fs from "fs";
 import { randomBytes } from "crypto";
 
+/** Open key-value bag — no fixed schema. Some conventional keys (see
+ * agents/types.ts RESUME_ANCHOR_KEYS) are used by the browser extension's
+ * heuristic form matcher, but anything else the user or resume extraction
+ * adds lives here too. */
 export type ProfileData = Record<string, string>;
 
 export interface ResumeExperience {
@@ -23,21 +27,21 @@ export interface ResumeEducation {
   endDate: string;
 }
 
+export interface LanguageEntry {
+  id: string;
+  name: string;
+  proficiency: string;
+}
+
 /** The structured parts of a resume that don't fit the flat `ProfileData`
- * bag (arrays of entries, not single strings) — edited in ResumeView.tsx,
- * pre-populated (best-effort) from the onboarding PDF extraction. */
+ * bag (arrays of entries, not single strings) — edited in ProfileView.tsx,
+ * pre-populated (best-effort) from onboarding's document extraction. */
 export interface StructuredResume {
   summary: string;
   experience: ResumeExperience[];
   education: ResumeEducation[];
   skills: string[];
-}
-
-export interface ProfileRecord {
-  id: string;
-  name: string;
-  data: ProfileData;
-  resume: StructuredResume;
+  languages: LanguageEntry[];
 }
 
 export type Provider = "ollama" | "claude";
@@ -56,41 +60,18 @@ export interface Settings {
   extensionSyncToken: string;
 }
 
-/** A local account gate — see src/main/account.ts. Not a security boundary
- * against filesystem access (store.json is plaintext JSON like everything
- * else here); it hashes the password (scrypt + salt) so it's at least never
- * stored/compared in plaintext, and gates casual access to the running app. */
-export interface Account {
-  username: string;
-  passwordHash: string;
-  passwordSalt: string;
+/** A single source of truth — no more named/switchable profiles. One set of
+ * contact/misc info, one resume, one list of uploaded documents. */
+export interface Store {
+  data: ProfileData;
+  resume: StructuredResume;
+  /** Paths of resume/CV/supporting documents the user has uploaded (for
+   * onboarding extraction and future reference — see ProfileView.tsx). */
+  resumeFiles: string[];
+  settings: Settings;
+  /** Whether the user has been through the first-run document-upload flow. */
   onboarded: boolean;
 }
-
-export interface Store {
-  activeId: string;
-  profiles: ProfileRecord[];
-  settings: Settings;
-  account: Account | null;
-}
-
-const FIELD_KEYS = [
-  "firstName",
-  "lastName",
-  "email",
-  "phone",
-  "address",
-  "city",
-  "state",
-  "zip",
-  "country",
-  "linkedin",
-  "github",
-  "website",
-  "currentTitle",
-  "currentCompany",
-  "resumePath",
-];
 
 function normalizeSettings(s?: Partial<Settings>): Settings {
   return {
@@ -103,24 +84,17 @@ function normalizeSettings(s?: Partial<Settings>): Settings {
   };
 }
 
-function emptyProfileData(): ProfileData {
-  const data: ProfileData = {};
-  for (const key of FIELD_KEYS) data[key] = "";
-  return data;
-}
-
 export function emptyStructuredResume(): StructuredResume {
-  return { summary: "", experience: [], education: [], skills: [] };
+  return { summary: "", experience: [], education: [], skills: [], languages: [] };
 }
 
 function defaultStore(): Store {
   return {
-    activeId: "default",
-    profiles: [
-      { id: "default", name: "Default", data: emptyProfileData(), resume: emptyStructuredResume() },
-    ],
+    data: {},
+    resume: emptyStructuredResume(),
+    resumeFiles: [],
     settings: normalizeSettings(),
-    account: null,
+    onboarded: false,
   };
 }
 
@@ -128,33 +102,65 @@ function storePath(): string {
   return path.join(app.getPath("userData"), "store.json");
 }
 
+/** Shape of anything that might already be on disk — spans every schema
+ * version this app has ever written, so `loadStore()` can migrate forward
+ * from whichever one it finds. */
+interface OnDiskStore extends Partial<Store> {
+  // Pre-single-profile shape (multiple named profiles + an active one).
+  activeId?: string;
+  profiles?: { id: string; name: string; data?: ProfileData; resume?: Partial<StructuredResume> }[];
+  // Pre-removal-of-login shape.
+  account?: { onboarded?: boolean };
+}
+
 export function loadStore(): Store {
-  // Preferred: the multi-profile store.
   try {
-    const parsed = JSON.parse(fs.readFileSync(storePath(), "utf-8")) as Store;
-    if (parsed && Array.isArray(parsed.profiles) && parsed.profiles.length) {
-      parsed.settings = normalizeSettings(parsed.settings);
-      parsed.account = parsed.account ?? null;
-      for (const p of parsed.profiles) {
-        p.data = { ...emptyProfileData(), ...p.data };
-        p.resume = p.resume ?? emptyStructuredResume();
-      }
-      if (!parsed.profiles.some((p) => p.id === parsed.activeId)) {
-        parsed.activeId = parsed.profiles[0].id;
-      }
-      return parsed;
+    const parsed = JSON.parse(fs.readFileSync(storePath(), "utf-8")) as OnDiskStore;
+    if (!parsed || typeof parsed !== "object") throw new Error("not an object");
+
+    const hadToken = !!parsed.settings?.extensionSyncToken;
+    const settings = normalizeSettings(parsed.settings);
+    const onboarded =
+      typeof parsed.onboarded === "boolean" ? parsed.onboarded : !!parsed.account?.onboarded;
+
+    let data: ProfileData;
+    let resume: StructuredResume;
+    let resumeFiles: string[];
+    let needsResave = !hadToken || !!parsed.account;
+
+    if (Array.isArray(parsed.profiles) && parsed.profiles.length) {
+      // Migrate the old multi-profile shape: keep whichever was active,
+      // drop the rest. This app only ever had one real profile in practice
+      // (multi-profile switching wasn't the direction it went), so this is
+      // a collapse, not a merge.
+      const active = parsed.profiles.find((p) => p.id === parsed.activeId) ?? parsed.profiles[0];
+      data = { ...(active.data ?? {}) };
+      const legacyResumePath = data.resumePath;
+      delete data.resumePath;
+      resumeFiles = legacyResumePath ? [legacyResumePath] : [];
+      resume = { ...emptyStructuredResume(), ...(active.resume ?? {}) };
+      needsResave = true;
+    } else {
+      data = parsed.data && typeof parsed.data === "object" ? parsed.data : {};
+      resume = { ...emptyStructuredResume(), ...(parsed.resume ?? {}) };
+      resumeFiles = Array.isArray(parsed.resumeFiles) ? parsed.resumeFiles : [];
     }
+
+    const store: Store = { data, resume, resumeFiles, settings, onboarded };
+    if (needsResave) saveStore(store);
+    return store;
   } catch {
     /* fall through to migration / default */
   }
 
-  // Migrate a legacy single profile.json if it exists.
+  // Migrate a legacy pre-profiles single profile.json, if it exists.
   try {
     const legacy = JSON.parse(
       fs.readFileSync(path.join(app.getPath("userData"), "profile.json"), "utf-8")
-    );
+    ) as ProfileData;
     const store = defaultStore();
-    store.profiles[0].data = { ...emptyProfileData(), ...legacy };
+    store.data = { ...legacy };
+    delete store.data.resumePath;
     return store;
   } catch {
     return defaultStore();
@@ -163,15 +169,6 @@ export function loadStore(): Store {
 
 export function saveStore(store: Store): void {
   fs.writeFileSync(storePath(), JSON.stringify(store, null, 2), "utf-8");
-}
-
-export function activeProfileData(store: Store): ProfileData {
-  const record = store.profiles.find((p) => p.id === store.activeId) ?? store.profiles[0];
-  return record ? record.data : emptyProfileData();
-}
-
-export function activeProfileRecord(store: Store): ProfileRecord {
-  return store.profiles.find((p) => p.id === store.activeId) ?? store.profiles[0];
 }
 
 ipcMain.handle("store:load", () => loadStore());

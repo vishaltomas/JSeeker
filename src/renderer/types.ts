@@ -18,20 +18,20 @@ export interface ResumeEducation {
   endDate: string;
 }
 
+export interface LanguageEntry {
+  id: string;
+  name: string;
+  proficiency: string;
+}
+
 /** The structured parts of a resume that don't fit the flat `ProfileData`
- * bag — edited in ResumeView.tsx. */
+ * bag — edited in ProfileView.tsx. */
 export interface StructuredResume {
   summary: string;
   experience: ResumeExperience[];
   education: ResumeEducation[];
   skills: string[];
-}
-
-export interface ProfileRecord {
-  id: string;
-  name: string;
-  data: ProfileData;
-  resume: StructuredResume;
+  languages: LanguageEntry[];
 }
 
 export interface Settings {
@@ -43,33 +43,23 @@ export interface Settings {
   extensionSyncToken: string;
 }
 
-/** Local account gate — see the matching doc comment in src/main/store.ts
- * for the security scope (a UI-level gate, not filesystem-level protection). */
-export interface Account {
-  username: string;
-  passwordHash: string;
-  passwordSalt: string;
-  onboarded: boolean;
-}
-
+/** A single source of truth — no more named/switchable profiles. */
 export interface Store {
-  activeId: string;
-  profiles: ProfileRecord[];
+  data: ProfileData;
+  resume: StructuredResume;
+  /** Paths of resume/CV/supporting documents uploaded so far. */
+  resumeFiles: string[];
   settings: Settings;
-  account: Account | null;
+  /** Whether the user has been through the first-run document-upload flow. */
+  onboarded: boolean;
 }
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
-export interface AccountCreateResult {
-  ok: boolean;
-  error?: string;
-}
-
 export interface ResumeParseResult {
   fields: ProfileData;
   resume: StructuredResume;
-  unsupported?: boolean;
+  unsupportedFiles: string[];
   error?: string;
 }
 
@@ -85,12 +75,8 @@ export interface Api {
   versions: { node: string; chrome: string; electron: string };
   loadStore: () => Promise<Store>;
   saveStore: (store: Store) => Promise<boolean>;
-  pickResume: () => Promise<string | null>;
-  account: {
-    create: (username: string, password: string) => Promise<AccountCreateResult>;
-    login: (username: string, password: string) => Promise<boolean>;
-  };
-  parseResume: (filePath: string) => Promise<ResumeParseResult>;
+  pickResumeFiles: () => Promise<string[]>;
+  parseResume: (filePaths: string[]) => Promise<ResumeParseResult>;
   extensionInfo: () => Promise<{ port: number }>;
   onOllamaStatus: (cb: (status: OllamaStatus) => void) => void;
   getOllamaStatus: () => Promise<OllamaStatus | null>;

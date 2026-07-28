@@ -4,7 +4,7 @@ import type { Store } from "../main/store";
 import { loadStore } from "../main/store";
 import { getMainWindow } from "../main/window";
 import type { ChatMessage, FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
-import { RESUME_FIELD_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
+import { RESUME_ANCHOR_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
 import {
   buildAutofillPrompt,
   buildResumeExtractionPrompt,
@@ -65,19 +65,22 @@ export async function planAutofillWithOllama(
 const RESUME_EXTRACTION_SCHEMA = {
   type: "object",
   properties: {
-    ...Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, { type: "string" }])),
+    ...Object.fromEntries(RESUME_ANCHOR_KEYS.map((k) => [k, { type: "string" }])),
     ...RESUME_STRUCTURE_SCHEMA_PROPERTIES,
   },
-  required: [...RESUME_FIELD_KEYS, ...RESUME_STRUCTURE_KEYS],
+  required: [...RESUME_ANCHOR_KEYS, ...RESUME_STRUCTURE_KEYS],
 };
 
-/** Ask the local Ollama model to extract profile fields and structured
- * resume sections from resume text during onboarding (see agents/types.ts
- * `ResumeExtraction`). */
-export async function parseResumeWithOllama(store: Store, resumeText: string): Promise<ResumeExtraction> {
+/** Ask the local Ollama model to extract a profile — anchor fields, open
+ * extraFields, and structured resume sections — from one or more uploaded
+ * documents at once (see agents/types.ts `ResumeExtraction`). */
+export async function parseResumeWithOllama(
+  store: Store,
+  documents: { filename: string; text: string }[]
+): Promise<ResumeExtraction> {
   const host = store.settings.ollamaHost || DEFAULT_HOST;
   const model = store.settings.ollamaModel || DEFAULT_MODEL;
-  const prompt = buildResumeExtractionPrompt(resumeText);
+  const prompt = buildResumeExtractionPrompt(documents);
 
   const res = await fetch(`${host}/api/chat`, {
     method: "POST",

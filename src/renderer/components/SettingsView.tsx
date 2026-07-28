@@ -1,11 +1,10 @@
 import { useState } from "react";
 import type { Store } from "../types";
-import { ProfilesPanel } from "./settings/ProfilesPanel";
 import { AssistantPanel } from "./settings/AssistantPanel";
 import { ExtensionPanel } from "./settings/ExtensionPanel";
 import { btn, cx, viewSection } from "../ui";
 
-type Section = "profiles" | "assistant" | "extension";
+type Section = "assistant" | "extension";
 
 interface SettingsViewProps {
   visible: boolean;
@@ -22,7 +21,7 @@ function navItemClass(active: boolean): string {
 }
 
 export function SettingsView({ visible, store, persist, onBack }: SettingsViewProps) {
-  const [section, setSection] = useState<Section>("profiles");
+  const [section, setSection] = useState<Section>("assistant");
 
   return (
     <section className={viewSection(visible)}>
@@ -35,9 +34,6 @@ export function SettingsView({ visible, store, persist, onBack }: SettingsViewPr
 
       <div className="flex min-h-0 flex-1">
         <nav className="flex w-[200px] flex-shrink-0 flex-col gap-1 border-r border-line-subtle bg-surface-5 px-2.5 py-3.5">
-          <button className={navItemClass(section === "profiles")} onClick={() => setSection("profiles")}>
-            Profiles
-          </button>
           <button
             className={navItemClass(section === "assistant")}
             onClick={() => setSection("assistant")}
@@ -55,9 +51,6 @@ export function SettingsView({ visible, store, persist, onBack }: SettingsViewPr
         <div className="min-w-0 flex-1 overflow-y-auto px-7 py-6">
           {/* Panels stay mounted and are only hidden via CSS (not conditionally
               rendered) so unsaved edits in one tab survive switching to another. */}
-          <div className={cx(section !== "profiles" && "hidden")}>
-            <ProfilesPanel store={store} persist={persist} />
-          </div>
           <div className={cx(section !== "assistant" && "hidden")}>
             <AssistantPanel store={store} persist={persist} />
           </div>

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type { ProfileData, Store, StructuredResume } from "../../types";
 import { emptyResume } from "../../hooks/useAppStore";
-import { btn, btnBlock, btnPrimary, cx, fieldInput, fieldLabel, statusText } from "../../ui";
-import { FIELDS } from "../settings/profileFields";
+import { KeyValueEditor } from "../KeyValueEditor";
+import { btn, btnBlock, btnPrimary, cx, statusText } from "../../ui";
+import { Loader2, Trash2 } from "lucide-react";
 
 interface ResumeOnboardingProps {
   store: Store;
@@ -15,85 +16,111 @@ function basename(p: string): string {
 
 export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
   const [stage, setStage] = useState<"upload" | "review">("upload");
-  const [filePath, setFilePath] = useState<string | null>(null);
+  const [filePaths, setFilePaths] = useState<string[]>([]);
   const [fields, setFields] = useState<ProfileData>({});
   const [resume, setResume] = useState<StructuredResume>(emptyResume());
-  const [unsupported, setUnsupported] = useState(false);
+  const [unsupportedFiles, setUnsupportedFiles] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
-  const activeProfile = store.profiles.find((p) => p.id === store.activeId) ?? store.profiles[0];
-
-  function finishOnboarding(extraData?: ProfileData, extraResume?: StructuredResume): void {
-    const profiles = store.profiles.map((p) =>
-      p.id === activeProfile.id
-        ? { ...p, data: { ...p.data, ...(extraData ?? {}) }, resume: extraResume ?? p.resume }
-        : p
-    );
+  function finish(finalFields: ProfileData, finalResume: StructuredResume): void {
     persist({
       ...store,
-      profiles,
-      account: store.account ? { ...store.account, onboarded: true } : store.account,
+      data: { ...store.data, ...finalFields },
+      resume: finalResume,
+      resumeFiles: filePaths,
+      onboarded: true,
     });
   }
 
-  async function pickAndParse(): Promise<void> {
-    const picked = await window.api.pickResume();
-    if (!picked) return;
-    setFilePath(picked);
-    setUnsupported(false);
+  async function addFiles(): Promise<void> {
+    const picked = await window.api.pickResumeFiles();
+    if (!picked.length) return;
+    setFilePaths((prev) => Array.from(new Set([...prev, ...picked])));
+  }
+
+  function removeFile(path: string): void {
+    setFilePaths((prev) => prev.filter((p) => p !== path));
+  }
+
+  async function extractAndContinue(): Promise<void> {
     setStatus("");
     setBusy(true);
     try {
-      const result = await window.api.parseResume(picked);
-      if (result.unsupported) {
-        setUnsupported(true);
-        setFields({});
-        setResume(emptyResume());
-      } else if (result.error) {
-        setStatus(result.error);
-        setFields(result.fields);
-        setResume(result.resume);
-      } else {
-        setFields(result.fields);
-        setResume(result.resume);
-      }
+      const result = await window.api.parseResume(filePaths);
+      setUnsupportedFiles(result.unsupportedFiles);
+      if (result.error) setStatus(result.error);
+      setFields(result.fields);
+      setResume(result.resume);
     } finally {
       setBusy(false);
       setStage("review");
     }
   }
 
-  function saveAndContinue(): void {
-    const trimmed: ProfileData = {};
-    for (const key of Object.keys(fields)) trimmed[key] = fields[key].trim();
-    if (filePath) trimmed.resumePath = filePath;
-    finishOnboarding(trimmed, resume);
-  }
+  const resumeCounts = [
+    resume.experience.length ? `${resume.experience.length} work experience${resume.experience.length === 1 ? "" : "s"}` : null,
+    resume.education.length ? `${resume.education.length} education entr${resume.education.length === 1 ? "y" : "ies"}` : null,
+    resume.skills.length ? `${resume.skills.length} skill${resume.skills.length === 1 ? "" : "s"}` : null,
+    resume.languages.length ? `${resume.languages.length} language${resume.languages.length === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
 
   return (
     <div className="flex h-screen items-center justify-center bg-surface-0 font-sans text-ink">
-      <div className="w-[460px] rounded-xl border border-line bg-surface-2 p-6">
+      <div className="w-[520px] rounded-xl border border-line bg-surface-2 p-6">
         {stage === "upload" && (
           <>
-            <h1 className="mb-1 text-lg font-bold">Add your resume</h1>
+            <h1 className="mb-1 text-lg font-bold">Add your documents</h1>
             <p className="mb-4 text-xs text-ink-faint">
-              Upload a PDF resume and we'll read it to pre-fill your profile — you'll get a
-              chance to review everything before it's saved.
+              Upload your resume, cover letter, or anything else worth reading — add as many as
+              you like, they'll be combined into one read. You'll get a chance to review
+              everything before it's saved.
             </p>
+
+            {filePaths.length > 0 && (
+              <div className="mb-3">
+                {filePaths.map((path) => (
+                  <div
+                    key={path}
+                    className="mb-1.5 flex items-center gap-2 rounded-md border border-line bg-surface-0 px-3 py-2"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-ink-soft">{basename(path)}</span>
+                    <button
+                      type="button"
+                      className="flex h-6 w-6 flex-shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-faint hover:bg-surface-3 hover:text-danger-text"
+                      aria-label="Remove"
+                      onClick={() => removeFile(path)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button type="button" className={cx(btn, "w-full")} disabled={busy} onClick={addFiles}>
+              + Add files…
+            </button>
             <button
               type="button"
-              className={cx(btnPrimary, "w-full")}
-              disabled={busy}
-              onClick={pickAndParse}
+              className={cx(btnPrimary, btnBlock)}
+              disabled={busy || filePaths.length === 0}
+              onClick={extractAndContinue}
             >
-              {busy ? "Reading your resume…" : "Choose resume file…"}
+              {busy ? (
+                <span className="inline-flex items-center justify-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  Reading your documents…
+                </span>
+              ) : (
+                "Extract & Continue"
+              )}
             </button>
             <button
               type="button"
               className={cx(btn, btnBlock)}
               disabled={busy}
-              onClick={() => finishOnboarding()}
+              onClick={() => finish({}, emptyResume())}
             >
               Skip for now
             </button>
@@ -104,29 +131,34 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
           <>
             <h1 className="mb-1 text-lg font-bold">Review your info</h1>
             <p className="mb-3 text-xs text-ink-faint">
-              {unsupported
-                ? "We can only auto-read PDF resumes right now — this file will still be attached to applications, but you'll need to fill in your details below by hand."
-                : "Fix anything that doesn't look right — this becomes the info used to fill out applications."}
+              Fix anything that doesn't look right — this becomes the info used to fill out
+              applications. Add or remove fields freely.
             </p>
-            {filePath && (
-              <p className="mb-3 truncate text-xs text-ink-soft">Resume: {basename(filePath)}</p>
+            {unsupportedFiles.length > 0 && (
+              <p className="mb-3 text-xs text-status-warn">
+                Could only auto-read PDFs — {unsupportedFiles.map(basename).join(", ")} will stay
+                attached as {unsupportedFiles.length === 1 ? "a document" : "documents"} but wasn't
+                read.
+              </p>
             )}
-            <div className="grid grid-cols-2 gap-2.5">
-              {FIELDS.map(({ key, label }) => (
-                <div key={key}>
-                  <label className={fieldLabel} htmlFor={`ro-${key}`}>
-                    {label}
-                  </label>
-                  <input
-                    id={`ro-${key}`}
-                    className={fieldInput}
-                    value={fields[key] ?? ""}
-                    onChange={(e) => setFields({ ...fields, [key]: e.target.value })}
-                  />
-                </div>
-              ))}
-            </div>
-            <button type="button" className={cx(btnPrimary, btnBlock)} onClick={saveAndContinue}>
+            {resumeCounts.length > 0 && (
+              <p className="mb-3 text-xs text-ink-soft">
+                Also found: {resumeCounts.join(", ")} — review the details in the Resume tab after.
+              </p>
+            )}
+
+            <KeyValueEditor
+              initialValue={fields}
+              onChange={setFields}
+              keyPlaceholder="e.g. firstName, Visa status"
+              valuePlaceholder="Value"
+            />
+
+            <button
+              type="button"
+              className={cx(btnPrimary, btnBlock)}
+              onClick={() => finish(fields, resume)}
+            >
               Save & Continue
             </button>
             <button
@@ -137,7 +169,7 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
                 setStatus("");
               }}
             >
-              Upload a different file
+              Upload different files
             </button>
             <p className={statusText}>{status}</p>
           </>

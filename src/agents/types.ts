@@ -23,10 +23,13 @@ export interface FieldMapping {
   value: string;
 }
 
-/** Profile field keys the onboarding resume extractor fills in — matches
- * ProfilesPanel.tsx's editable field list (everything but `resumePath`,
- * which is set by the file picker itself, not extracted text). */
-export const RESUME_FIELD_KEYS = [
+/** Well-known profile keys the browser extension's heuristic form matcher
+ * (extension/content.js SPECS) looks for by exact name — resume extraction
+ * is guided (not restricted) to use these when the info is present, but can
+ * add any other key it finds useful via `extraFields` below. Not a schema,
+ * just a naming convention for the fields that benefit most from being
+ * predictable. */
+export const RESUME_ANCHOR_KEYS = [
   "firstName",
   "lastName",
   "email",
@@ -43,15 +46,27 @@ export const RESUME_FIELD_KEYS = [
   "currentCompany",
 ] as const;
 
-/** Flat, fully-required (empty string when unknown) so it maps directly onto
- * a JSON schema for structured output — same convention as the structured
- * resume fields below. */
-export type ResumeFields = Record<(typeof RESUME_FIELD_KEYS)[number], string>;
+/** Open key-value bag — the merged result of the anchor fields plus
+ * whatever `extraFields` the model found (see `ResumeExtraction`). */
+export type ResumeFields = Record<string, string>;
+
+/** One freeform key-value pair the model chose to extract beyond the anchor
+ * fields (e.g. "Visa status" -> "H1B", "Notice period" -> "2 weeks"). An
+ * array of {key,value} objects rather than an open JSON-schema dictionary
+ * because structured-output "strict" JSON schema (both Ollama's and
+ * Claude's) doesn't reliably support truly open `additionalProperties` —
+ * an array of well-typed objects sidesteps that entirely, the same way
+ * `FieldMapping[]` already does for autofill. */
+export interface ExtraField {
+  key: string;
+  value: string;
+}
 
 /** Structured resume entries as extracted from the LLM, *before* the main
  * process assigns each one a stable `id` (see main/store.ts's
- * `ResumeExperience`/`ResumeEducation`, which add `id`) — the model isn't
- * asked to invent ids, that's not a meaningful thing for it to do. */
+ * `ResumeExperience`/`ResumeEducation`/`LanguageEntry`, which add `id`) —
+ * the model isn't asked to invent ids, that's not a meaningful thing for it
+ * to do. */
 export interface ExtractedResumeExperience {
   title: string;
   company: string;
@@ -68,20 +83,27 @@ export interface ExtractedResumeEducation {
   endDate: string;
 }
 
-/** The full result of one resume-extraction LLM call: the flat contact
- * fields plus the structured sections, all in a single round-trip. */
+export interface ExtractedLanguage {
+  name: string;
+  proficiency: string;
+}
+
+/** The full result of one resume-extraction LLM call across however many
+ * documents were uploaded: the merged flat fields (anchors + extras) plus
+ * the structured sections, all in a single round-trip. */
 export interface ResumeExtraction {
   fields: ResumeFields;
   summary: string;
   experience: ExtractedResumeExperience[];
   education: ExtractedResumeEducation[];
   skills: string[];
+  languages: ExtractedLanguage[];
 }
 
 /** The JSON-schema fragment for the structured sections, shared between
  * ollama.ts's `format` and claude.ts's `output_config.format.json_schema`
- * so the nested experience/education shape has one source of truth instead
- * of two hand-kept copies. */
+ * so the nested shapes have one source of truth instead of hand-kept
+ * copies. */
 export const RESUME_STRUCTURE_SCHEMA_PROPERTIES = {
   summary: { type: "string" },
   experience: {
@@ -115,6 +137,37 @@ export const RESUME_STRUCTURE_SCHEMA_PROPERTIES = {
     },
   },
   skills: { type: "array", items: { type: "string" } },
+  languages: {
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        proficiency: { type: "string" },
+      },
+      required: ["name", "proficiency"],
+      additionalProperties: false,
+    },
+  },
+  extraFields: {
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        value: { type: "string" },
+      },
+      required: ["key", "value"],
+      additionalProperties: false,
+    },
+  },
 } as const;
 
-export const RESUME_STRUCTURE_KEYS = ["summary", "experience", "education", "skills"] as const;
+export const RESUME_STRUCTURE_KEYS = [
+  "summary",
+  "experience",
+  "education",
+  "skills",
+  "languages",
+  "extraFields",
+] as const;

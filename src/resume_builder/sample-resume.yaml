@@ -1,0 +1,73 @@
+# Sample resume fixture for resume_builder/parser.tsx.
+# Shape mirrors the app's existing profile/resume model (see StructuredResume
+# and ProfileData in src/main/store.ts) so the parser can build directly on
+# top of what's already extracted/edited elsewhere in the app.
+
+personal:
+  firstName: Jordan
+  lastName: Rivera
+  email: jordan.rivera@example.com
+  phone: "+1 415 555 0182"
+  address: 221 Baker Street
+  city: San Francisco
+  state: CA
+  zip: "94107"
+  country: United States
+  linkedin: https://www.linkedin.com/in/jordanrivera
+  github: github.com/jordanrivera
+  website: jordanrivera.dev
+  currentTitle: Senior Software Engineer
+  currentCompany: Northwind Analytics
+
+summary: >
+  Backend-leaning full-stack engineer with 7 years of experience building
+  data-intensive web applications. Enjoys owning features end to end, from
+  schema design to production monitoring, and mentoring junior engineers.
+
+experience:
+  - title: Senior Software Engineer
+    company: Northwind Analytics
+    startDate: Mar 2022
+    endDate: Present
+    bullets:
+      - Led the migration of the reporting service from a monolith to a set
+        of async workers, cutting p95 report-generation time by 65%.
+      - Designed the team's on-call runbook and rotation, reducing mean
+        time-to-resolution for production incidents from 40 to 12 minutes.
+      - Mentored two junior engineers through their first full feature
+        launches, from design doc to rollout.
+  - title: Software Engineer
+    company: Bluefield Labs
+    startDate: Jun 2018
+    endDate: Feb 2022
+    bullets:
+      - Built the initial version of the customer-facing analytics dashboard
+        using React and a Django REST backend.
+      - Introduced integration tests for the billing pipeline, catching
+        three revenue-impacting bugs before release.
+      - Collaborated with design and product to ship a self-serve onboarding
+        flow that reduced support tickets by 30%.
+
+education:
+  - school: University of Washington
+    degree: BSc Computer Science
+    field: ""
+    startDate: Sep 2014
+    endDate: Jun 2018
+
+skills:
+  - Python
+  - TypeScript
+  - React
+  - PostgreSQL
+  - Django
+  - Docker
+  - AWS
+  - System design
+  - Mentoring
+
+languages:
+  - name: English
+    proficiency: Native
+  - name: Spanish
+    proficiency: Conversational

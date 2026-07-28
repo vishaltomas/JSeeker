@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Store } from "../main/store";
 import type { ChatMessage, FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
-import { RESUME_FIELD_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
+import { RESUME_ANCHOR_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
 import {
   buildAutofillPrompt,
   buildResumeExtractionPrompt,
@@ -63,10 +63,13 @@ export async function planAutofillWithClaude(
   return parseFieldMappings(block.text);
 }
 
-/** Ask Claude to extract profile fields and structured resume sections from
- * resume text during onboarding, using structured outputs so the response
- * always matches ResumeExtraction. */
-export async function parseResumeWithClaude(store: Store, resumeText: string): Promise<ResumeExtraction> {
+/** Ask Claude to extract a profile — anchor fields, open extraFields, and
+ * structured resume sections — from one or more uploaded documents at once,
+ * using structured outputs so the response always matches ResumeExtraction. */
+export async function parseResumeWithClaude(
+  store: Store,
+  documents: { filename: string; text: string }[]
+): Promise<ResumeExtraction> {
   const apiKey = store.settings.anthropicApiKey;
   if (!apiKey) throw new Error("No Claude API key set. Add one in Settings → Assistant.");
   const model = store.settings.anthropicModel || DEFAULT_CLAUDE_MODEL;
@@ -74,18 +77,18 @@ export async function parseResumeWithClaude(store: Store, resumeText: string): P
 
   const response = await client.messages.create({
     model,
-    max_tokens: 2048,
-    messages: [{ role: "user", content: buildResumeExtractionPrompt(resumeText) }],
+    max_tokens: 3072,
+    messages: [{ role: "user", content: buildResumeExtractionPrompt(documents) }],
     output_config: {
       format: {
         type: "json_schema",
         schema: {
           type: "object",
           properties: {
-            ...Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, { type: "string" }])),
+            ...Object.fromEntries(RESUME_ANCHOR_KEYS.map((k) => [k, { type: "string" }])),
             ...RESUME_STRUCTURE_SCHEMA_PROPERTIES,
           },
-          required: [...RESUME_FIELD_KEYS, ...RESUME_STRUCTURE_KEYS],
+          required: [...RESUME_ANCHOR_KEYS, ...RESUME_STRUCTURE_KEYS],
           additionalProperties: false,
         },
       },

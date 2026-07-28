@@ -2,11 +2,6 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
-interface AccountCreateResult {
-  ok: boolean;
-  error?: string;
-}
-
 interface ResumeExperience {
   id: string;
   title: string;
@@ -25,17 +20,24 @@ interface ResumeEducation {
   endDate: string;
 }
 
+interface LanguageEntry {
+  id: string;
+  name: string;
+  proficiency: string;
+}
+
 interface StructuredResume {
   summary: string;
   experience: ResumeExperience[];
   education: ResumeEducation[];
   skills: string[];
+  languages: LanguageEntry[];
 }
 
 interface ResumeParseResult {
   fields: Record<string, string>;
   resume: StructuredResume;
-  unsupported?: boolean;
+  unsupportedFiles: string[];
   error?: string;
 }
 
@@ -54,16 +56,10 @@ contextBridge.exposeInMainWorld("api", {
   loadStore: (): Promise<unknown> => ipcRenderer.invoke("store:load"),
   saveStore: (store: unknown): Promise<boolean> =>
     ipcRenderer.invoke("store:save", store),
-  pickResume: (): Promise<string | null> =>
-    ipcRenderer.invoke("dialog:pickResume"),
-  account: {
-    create: (username: string, password: string): Promise<AccountCreateResult> =>
-      ipcRenderer.invoke("account:create", { username, password }),
-    login: (username: string, password: string): Promise<boolean> =>
-      ipcRenderer.invoke("account:login", { username, password }),
-  },
-  parseResume: (filePath: string): Promise<ResumeParseResult> =>
-    ipcRenderer.invoke("resume:parse", { filePath }),
+  pickResumeFiles: (): Promise<string[]> =>
+    ipcRenderer.invoke("dialog:pickResumeFiles"),
+  parseResume: (filePaths: string[]): Promise<ResumeParseResult> =>
+    ipcRenderer.invoke("resume:parse", { filePaths }),
   extensionInfo: (): Promise<{ port: number }> => ipcRenderer.invoke("extension:info"),
   onOllamaStatus: (cb: (status: OllamaStatus) => void): void => {
     ipcRenderer.on("ollama:status", (_event, status: OllamaStatus) => cb(status));

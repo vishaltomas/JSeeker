@@ -1,9 +1,9 @@
 import { ipcMain } from "electron";
 import { randomUUID } from "crypto";
+import * as path from "path";
 import type { Store, StructuredResume } from "../main/store";
 import { emptyStructuredResume, loadStore } from "../main/store";
 import type { ChatMessage, FieldDescriptor, FieldMapping, ResumeFields } from "./types";
-import { RESUME_FIELD_KEYS } from "./types";
 import { chatWithOllama, parseResumeWithOllama, planAutofillWithOllama } from "./ollama";
 import { chatWithClaude, parseResumeWithClaude, planAutofillWithClaude } from "./claude";
 import { extractPdfText } from "./resumeExtract";
@@ -22,40 +22,58 @@ export async function planAutofillWithLLM(
     : planAutofillWithOllama(store, fields);
 }
 
-// Onboarding step: read a resume file and (for PDFs) extract profile fields
-// plus the structured resume sections via the configured provider. Non-PDF
-// files are returned as `unsupported` so the UI can fall back to manual
-// entry instead of pretending it read it.
+// Onboarding step: read one or more uploaded documents and (for PDFs)
+// extract a profile — open key-value fields plus the structured resume
+// sections — via the configured provider, combining all documents into one
+// extraction pass. Non-PDF files are reported back as `unsupportedFiles` so
+// the UI can say so instead of pretending it read them.
 ipcMain.handle(
   "resume:parse",
   async (
     _event,
-    args: { filePath: string }
-  ): Promise<{ fields: ResumeFields; resume: StructuredResume; unsupported?: boolean; error?: string }> => {
-    const emptyFields = Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, ""])) as ResumeFields;
+    args: { filePaths: string[] }
+  ): Promise<{
+    fields: ResumeFields;
+    resume: StructuredResume;
+    unsupportedFiles: string[];
+    error?: string;
+  }> => {
     const emptyResume = emptyStructuredResume();
+    const pdfPaths = args.filePaths.filter((p) => p.toLowerCase().endsWith(".pdf"));
+    const unsupportedFiles = args.filePaths.filter((p) => !p.toLowerCase().endsWith(".pdf"));
 
-    if (!args.filePath.toLowerCase().endsWith(".pdf")) {
-      return { fields: emptyFields, resume: emptyResume, unsupported: true };
+    if (!pdfPaths.length) {
+      return { fields: {}, resume: emptyResume, unsupportedFiles };
     }
 
     try {
-      const text = await extractPdfText(args.filePath);
+      const documents = await Promise.all(
+        pdfPaths.map(async (filePath) => ({
+          filename: path.basename(filePath),
+          text: await extractPdfText(filePath),
+        }))
+      );
       const store = loadStore();
       const extraction =
         store.settings.provider === "claude"
-          ? await parseResumeWithClaude(store, text)
-          : await parseResumeWithOllama(store, text);
+          ? await parseResumeWithClaude(store, documents)
+          : await parseResumeWithOllama(store, documents);
 
       const resume: StructuredResume = {
         summary: extraction.summary,
         experience: extraction.experience.map((e) => ({ id: randomUUID(), ...e })),
         education: extraction.education.map((e) => ({ id: randomUUID(), ...e })),
         skills: extraction.skills,
+        languages: extraction.languages.map((l) => ({ id: randomUUID(), ...l })),
       };
-      return { fields: extraction.fields, resume };
+      return { fields: extraction.fields, resume, unsupportedFiles };
     } catch (err) {
-      return { fields: emptyFields, resume: emptyResume, error: err instanceof Error ? err.message : String(err) };
+      return {
+        fields: {},
+        resume: emptyResume,
+        unsupportedFiles,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 );

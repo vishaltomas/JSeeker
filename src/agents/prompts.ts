@@ -1,14 +1,11 @@
 import type { Store } from "../main/store";
-import { activeProfileData, activeProfileRecord } from "../main/store";
-import type { FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
-import { RESUME_FIELD_KEYS } from "./types";
+import type { ExtraField, FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
+import { RESUME_ANCHOR_KEYS } from "./types";
 
-/** System prompt seeded with the active profile so the model can help fill applications. */
+/** System prompt seeded with the profile so the model can help fill applications. */
 export function buildSystemPrompt(store: Store): string {
-  const record = store.profiles.find((p) => p.id === store.activeId) ?? store.profiles[0];
-  const data = activeProfileData(store);
-  const lines = Object.entries(data)
-    .filter(([key, value]) => value && key !== "resumePath")
+  const lines = Object.entries(store.data)
+    .filter(([, value]) => value)
     .map(([key, value]) => `- ${key}: ${value}`);
   const profileText = lines.length ? lines.join("\n") : "(no info saved yet)";
   return [
@@ -16,7 +13,6 @@ export function buildSystemPrompt(store: Store): string {
     "Be concise and practical. Help draft and tailor answers to application questions,",
     "and use the user's saved info below when it is relevant.",
     "",
-    `Active profile: ${record ? record.name : "Default"}`,
     "The user's saved info:",
     profileText,
   ].join("\n");
@@ -26,13 +22,11 @@ export function buildSystemPrompt(store: Store): string {
  * values — used by the browser extension's LLM-fallback matching (see
  * src/main/extensionServer.ts POST /autofill). */
 export function buildAutofillPrompt(store: Store, fields: FieldDescriptor[]): string {
-  const data = activeProfileData(store);
-  const resume = activeProfileRecord(store).resume;
-  const profileLines = Object.entries(data)
-    .filter(([key, value]) => value && key !== "resumePath")
+  const profileLines = Object.entries(store.data)
+    .filter(([, value]) => value)
     .map(([key, value]) => `- ${key}: ${value}`);
-  if (resume.summary) profileLines.push(`- summary: ${resume.summary}`);
-  if (resume.skills.length) profileLines.push(`- skills: ${resume.skills.join(", ")}`);
+  if (store.resume.summary) profileLines.push(`- summary: ${store.resume.summary}`);
+  if (store.resume.skills.length) profileLines.push(`- skills: ${store.resume.skills.join(", ")}`);
   const profileText = profileLines.length ? profileLines.join("\n") : "(no info saved)";
 
   return [
@@ -75,38 +69,58 @@ export function parseFieldMappings(content: string): FieldMapping[] {
   );
 }
 
-/** Builds the onboarding prompt asking a model to extract both the flat
- * contact fields and the structured resume sections (summary, experience,
- * education, skills) from resume text, in one call. */
-export function buildResumeExtractionPrompt(resumeText: string): string {
+/** Builds the onboarding prompt asking a model to extract a profile from one
+ * or more uploaded documents at once — deliberately open-ended rather than
+ * hunting for a fixed list of fields: the well-known anchor keys are a
+ * guide (so the browser extension's heuristic matcher, which looks them up
+ * by exact name, keeps working), not a restriction — anything else useful
+ * goes in `extraFields` with whatever key name fits. */
+export function buildResumeExtractionPrompt(documents: { filename: string; text: string }[]): string {
+  const docBlocks = documents.map((d) => `--- ${d.filename} ---\n${d.text}`).join("\n\n");
+
   return [
-    "Extract the applicant's info from the resume text below.",
+    "You are extracting a job applicant's profile from the document(s) below — resumes, cover",
+    "letters, LinkedIn exports, or anything similar. There may be more than one; treat them as",
+    "describing the same person and combine what you learn from all of them.",
     "",
-    "Resume text:",
-    resumeText,
+    docBlocks,
     "",
-    `Contact fields to extract: ${RESUME_FIELD_KEYS.join(", ")}.`,
-    "Use an empty string for any contact field the resume doesn't clearly state.",
-    "`linkedin`/`github`/`website` should be the URL as written, if present.",
-    "`currentTitle`/`currentCompany` should reflect the most recent position.",
+    `Well-known fields — use these exact keys when the document(s) clearly state them: ${RESUME_ANCHOR_KEYS.join(", ")}.`,
+    "Use an empty string for any of those not stated. `linkedin`/`github`/`website` should be the URL",
+    "as written. `currentTitle`/`currentCompany` should reflect the most recent position.",
+    "",
+    "For anything else useful — visa/work authorization status, notice period, salary expectations,",
+    "certifications, availability, portfolio links, or anything else clearly stated — add it to",
+    "`extraFields` as {key, value} pairs with a clear, human-readable key. Don't force unrelated",
+    "information into the well-known fields above, and don't duplicate a well-known field in extraFields.",
     "",
     "Also extract:",
-    "- `summary`: a short professional summary, in the applicant's own words if the resume has one, otherwise \"\".",
-    "- `experience`: each work history entry with title, company, startDate, endDate (\"Present\" if current), and bullets (the resume's own bullet points, as separate strings).",
+    "- `summary`: a short professional summary, in the applicant's own words if the documents have one, otherwise \"\".",
+    "- `experience`: each work history entry with title, company, startDate, endDate (\"Present\" if current), and bullets (the document's own bullet points, as separate strings).",
     "- `education`: each entry with school, degree, field, startDate, endDate.",
     "- `skills`: a flat list of skill strings.",
+    "- `languages`: each spoken/written language with name and proficiency (e.g. \"Native\", \"Fluent\", \"Conversational\") — only if the documents actually mention languages.",
     "",
-    "Never invent information that isn't in the resume text. Use empty strings/arrays for anything not present.",
+    "Never invent information that isn't in the document(s). Use empty strings/arrays for anything not present.",
   ].join("\n");
 }
 
 /** Parse a model's JSON-mode response into a ResumeExtraction, tolerating
  * either a bare object or one wrapping it, and dropping malformed array
  * entries rather than failing the whole parse — extraction is best-effort;
- * the user always gets a chance to fix it by hand in the resume editor. */
+ * the user always gets a chance to fix it by hand afterward. `fields` in the
+ * result is the anchor keys merged with `extraFields`, so downstream code
+ * just sees one flat open key-value bag. */
 export function parseResumeExtraction(content: string): ResumeExtraction {
-  const emptyFields = Object.fromEntries(RESUME_FIELD_KEYS.map((k) => [k, ""])) as ResumeExtraction["fields"];
-  const empty: ResumeExtraction = { fields: emptyFields, summary: "", experience: [], education: [], skills: [] };
+  const emptyAnchors = Object.fromEntries(RESUME_ANCHOR_KEYS.map((k) => [k, ""]));
+  const empty: ResumeExtraction = {
+    fields: emptyAnchors,
+    summary: "",
+    experience: [],
+    education: [],
+    skills: [],
+    languages: [],
+  };
 
   let parsed: unknown;
   try {
@@ -117,21 +131,34 @@ export function parseResumeExtraction(content: string): ResumeExtraction {
 
   let obj = parsed as Record<string, unknown>;
   if (!obj || typeof obj !== "object") return empty;
-  if (!RESUME_FIELD_KEYS.some((k) => k in obj) && !("experience" in obj)) {
+  if (!RESUME_ANCHOR_KEYS.some((k) => k in obj) && !("experience" in obj)) {
     const nested = Object.values(obj).find(
       (v) =>
         v &&
         typeof v === "object" &&
-        (RESUME_FIELD_KEYS.some((k) => k in (v as object)) || "experience" in (v as object))
+        (RESUME_ANCHOR_KEYS.some((k) => k in (v as object)) || "experience" in (v as object))
     );
     if (nested) obj = nested as Record<string, unknown>;
   }
 
-  const fields = { ...emptyFields };
-  for (const key of RESUME_FIELD_KEYS) {
+  const fields: Record<string, string> = { ...emptyAnchors };
+  for (const key of RESUME_ANCHOR_KEYS) {
     const value = obj[key];
     if (typeof value === "string") fields[key] = value.trim();
   }
+
+  const extraFields: ExtraField[] = Array.isArray(obj.extraFields)
+    ? obj.extraFields.filter(
+        (e): e is ExtraField =>
+          !!e &&
+          typeof e === "object" &&
+          typeof (e as ExtraField).key === "string" &&
+          (e as ExtraField).key.trim() !== "" &&
+          typeof (e as ExtraField).value === "string" &&
+          (e as ExtraField).value.trim() !== ""
+      )
+    : [];
+  for (const { key, value } of extraFields) fields[key.trim()] = value.trim();
 
   const summary = typeof obj.summary === "string" ? obj.summary.trim() : "";
 
@@ -167,5 +194,15 @@ export function parseResumeExtraction(content: string): ResumeExtraction {
     ? obj.skills.filter((s): s is string => typeof s === "string" && s.trim() !== "").map((s) => s.trim())
     : [];
 
-  return { fields, summary, experience, education, skills };
+  const languages = Array.isArray(obj.languages)
+    ? obj.languages
+        .filter((l): l is Record<string, unknown> => !!l && typeof l === "object")
+        .map((l) => ({
+          name: typeof l.name === "string" ? l.name.trim() : "",
+          proficiency: typeof l.proficiency === "string" ? l.proficiency.trim() : "",
+        }))
+        .filter((l) => l.name)
+    : [];
+
+  return { fields, summary, experience, education, skills, languages };
 }

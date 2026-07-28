@@ -1,6 +1,6 @@
 import { createServer } from "http";
 import { ipcMain } from "electron";
-import { activeProfileData, activeProfileRecord, loadStore } from "./store";
+import { loadStore } from "./store";
 import { planAutofillWithLLM } from "../agents";
 import type { FieldDescriptor } from "../agents/types";
 
@@ -54,8 +54,8 @@ export function startExtensionServer(): void {
     }
 
     if (req.method === "GET" && req.url === "/profile") {
-      const data = activeProfileData(store);
-      const resume = activeProfileRecord(store).resume;
+      const data = store.data;
+      const resume = store.resume;
       sendJson(res, 200, {
         ...data,
         fullName: [data.firstName, data.lastName].filter(Boolean).join(" "),
