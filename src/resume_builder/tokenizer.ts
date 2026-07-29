@@ -1,11 +1,19 @@
 import { Token } from './types';
 
-/** True for a single 0-9 character. Deliberately not `!Number.isNaN(char)`:
- * Number.isNaN doesn't coerce, so it's false for every string, and the
- * coercing `Number(char)` reads "" and " " as 0 — both would pass as digits. */
-function isDigit(char: string | undefined): boolean {
-    return char !== undefined && char >= "0" && char <= "9";
-}
+// Token specifications
+// Every pattern must be anchored with ^: _match advances the cursor by the
+// match length alone, so a pattern that matches further into the string leaves
+// the cursor short and knocks the rest of the token stream out of alignment.
+const tokenSpec : [RegExp, string|null][]= [
+    [/^\d+/, 'NUMBER'],
+    [/^"[^"]*"/, 'STRING'],
+    [/^'[^']*'/, 'STRING'],
+    // skipping whitespaces
+    [/^\s+/, null],
+    // Skipping comments
+    [/^\/\/.*/, null],
+    [/^\/\*[\s\S]*?\*\//, null]
+] 
 
 export class Tokenizer{
     _string : string = "";
@@ -26,32 +34,38 @@ export class Tokenizer{
     hasMoreTokens(){
         return this._cursor < this._string.length;
     }
+    
+    // Matches regular expression with string
+    _match (regExp:RegExp, str:string){
+        let matched = regExp.exec(str)
+        if (matched !== null){
+            // updaate the cursor with length of token
+            this._cursor += matched[0].length
+            return matched[0]
+        }
+        return null
+    }
+
     getNextToken(): Token | null {
         if(!this.hasMoreTokens()) {
             return null;
         }
         const str = this._string.slice(this._cursor);
-        // For extracting Number tokens
-        let matched = /^\d+/.exec(str)
-        if (matched !== null){
-            this._cursor += matched[0].length
-            return {
-                type: 'NUMBER',
-                value: matched[0]
-            }
-        }
-        // For extracting string tokens
-        matched = /\"[^"]*\"/.exec(str)
-        if (matched !== null){
-            this._cursor += matched[0].length
-            return {
-                type: 'STRING',
-                value: matched[0]
-            }
-        }
-        // Nothing matched — no more tokens to hand out.
-        return null;
-    }
 
+        for (const [regExp, tokenType] of tokenSpec){
+            // For extracting different types of tokens
+            const tokenValue = this._match(regExp, str)
+            if (tokenValue == null) continue;
+            // skip left-end whitespaces
+            if(tokenType == null) return this.getNextToken(); 
+            return {
+                type: tokenType,
+                value: tokenValue
+            }
+        }
+        console.log(str)
+        // Nothing matched — no more tokens to hand out.
+        throw new SyntaxError(`Unexpected token: ${str[0]}`);
+    }
     
 }
