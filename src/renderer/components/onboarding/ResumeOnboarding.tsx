@@ -4,6 +4,8 @@ import { emptyResume } from "../../hooks/useAppStore";
 import { KeyValueEditor } from "../KeyValueEditor";
 import { btn, btnBlock, btnPrimary, cx, statusText } from "../../ui";
 import { Loader2, Trash2 } from "lucide-react";
+import { WelcomeIntro } from "../welcome/WelcomeIntro";
+import { WelcomeShell } from "../welcome/WelcomeShell";
 
 interface ResumeOnboardingProps {
   store: Store;
@@ -15,7 +17,7 @@ function basename(p: string): string {
 }
 
 export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
-  const [stage, setStage] = useState<"upload" | "review">("upload");
+  const [stage, setStage] = useState<"welcome" | "upload" | "review">("welcome");
   const [filePaths, setFilePaths] = useState<string[]>([]);
   const [fields, setFields] = useState<ProfileData>({});
   const [resume, setResume] = useState<StructuredResume>(emptyResume());
@@ -37,6 +39,15 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
     const picked = await window.api.pickResumeFiles();
     if (!picked.length) return;
     setFilePaths((prev) => Array.from(new Set([...prev, ...picked])));
+  }
+
+  /** Entry point from the welcome orb: pick files first, then drop into the
+   * regular upload stage so the list can still be edited before extracting. */
+  async function pickAndContinue(): Promise<void> {
+    const picked = await window.api.pickResumeFiles();
+    if (!picked.length) return;
+    setFilePaths(picked);
+    setStage("upload");
   }
 
   function removeFile(path: string): void {
@@ -65,8 +76,22 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
     resume.languages.length ? `${resume.languages.length} language${resume.languages.length === 1 ? "" : "s"}` : null,
   ].filter(Boolean);
 
+  if (stage === "welcome") {
+    return (
+      <WelcomeShell>
+        <WelcomeIntro
+          greeting="Hi Welcome"
+          message="Please upload the files that associate you for applying jobs"
+          onPrimary={pickAndContinue}
+          secondaryLabel="Skip for now"
+          onSecondary={() => finish({}, emptyResume())}
+        />
+      </WelcomeShell>
+    );
+  }
+
   return (
-    <div className="flex h-screen items-center justify-center bg-surface-0 font-sans text-ink">
+    <WelcomeShell>
       <div className="w-[520px] rounded-xl border border-line bg-surface-2 p-6">
         {stage === "upload" && (
           <>
@@ -175,6 +200,6 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
           </>
         )}
       </div>
-    </div>
+    </WelcomeShell>
   );
 }

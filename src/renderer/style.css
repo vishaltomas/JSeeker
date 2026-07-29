@@ -35,3 +35,79 @@
   --color-status-warn: #eab308;
   --color-status-error: #ef4444;
 }
+
+/* ---------------------------------------------------------------------------
+   Onboarding welcome intro.
+
+   The pieces (trailing dots, greeting bubble, upload orb) animate in one at a
+   time via staggered animation-delays, so the screen reads like a chat message
+   arriving. `both` fill mode keeps each piece invisible until its delay
+   elapses. Looping motion (float/glow) is applied to a wrapper element so it
+   can run independently of the one-shot entrance on the child.
+   ------------------------------------------------------------------------ */
+@keyframes intro-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes intro-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes intro-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+@keyframes intro-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 45px -10px rgba(168, 85, 247, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 75px 0 rgba(168, 85, 247, 0.8);
+  }
+}
+
+.intro-pop {
+  animation: intro-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.intro-rise {
+  animation: intro-rise 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.intro-float {
+  animation: intro-float 4.5s ease-in-out infinite;
+}
+
+.intro-glow {
+  animation: intro-glow 3.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intro-pop,
+  .intro-rise,
+  .intro-float,
+  .intro-glow {
+    animation: none;
+  }
+}
