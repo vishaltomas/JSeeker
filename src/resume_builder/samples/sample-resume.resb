@@ -1,4 +1,8 @@
-< Vishal Thomas > | fw : 200 |fs : 24 | aligin: center
+macro:
+    Name: (fw : 200 |fs : 24 | aligin: 'center').
+main:
+    Name: Vishal Thomas
+/*
 < Dublin 15, Ireland | +353 89 471 2696 | vishaltomas@outlook.com >
 < linkedin.com/in/vishaltomas | github.com/vishaltomas > 
 <SUMMARY> | fw : 200 |fs : 18
@@ -14,3 +18,4 @@ search, LLM evaluation (MTEB), quantization, LangChain, Hugging Face, PyTorch, s
 Programming: Python, SQL, JavaScript (React), C, C++
 Cloud & Data: AWS (S3), Azure (Synapse, Data Factory, Databricks), Spark, Delta Lake, Snowflake
 Engineering: REST APIs, microservices, Flask, Git, GitLab CI/CD, testing, code review, Agile>
+*/

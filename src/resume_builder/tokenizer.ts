@@ -4,6 +4,11 @@ import { Token } from './types';
 // Every pattern must be anchored with ^: _match advances the cursor by the
 // match length alone, so a pattern that matches further into the string leaves
 // the cursor short and knocks the rest of the token stream out of alignment.
+const Keywords = [
+    'macro',
+    'main'
+]
+
 const tokenSpec : [RegExp, string|null][]= [
     [/^\d+/, 'NUMBER'],
     [/^"[^"]*"/, 'STRING'],
@@ -12,7 +17,14 @@ const tokenSpec : [RegExp, string|null][]= [
     [/^\s+/, null],
     // Skipping comments
     [/^\/\/.*/, null],
-    [/^\/\*[\s\S]*?\*\//, null]
+    [/^\/\*[\s\S]*?\*\//, null],
+    // Operators
+    [/^[:]/, 'OPERATOR'],
+    // Punctuation
+    [/^[\(\)\|\.]/, 'PUNCTUATION'],
+    //Identifier and Keywords
+    [new RegExp(`^(${Keywords.join('|')})`), 'KEYWORD'],
+    [/^[a-zA-Z][a-zA-Z\_0-9]*/, 'IDENTIFIER']
 ] 
 
 export class Tokenizer{
@@ -28,9 +40,6 @@ export class Tokenizer{
         this._cursor = 0;
     }
     // To check whether the program reached end of line
-    isEOF(){
-        return this._cursor === this._string.length
-    }
     hasMoreTokens(){
         return this._cursor < this._string.length;
     }
@@ -48,10 +57,12 @@ export class Tokenizer{
 
     getNextToken(): Token | null {
         if(!this.hasMoreTokens()) {
-            return null;
+            return  {
+                type: 'EOF',
+                value: null
+            };
         }
         const str = this._string.slice(this._cursor);
-
         for (const [regExp, tokenType] of tokenSpec){
             // For extracting different types of tokens
             const tokenValue = this._match(regExp, str)
@@ -63,7 +74,6 @@ export class Tokenizer{
                 value: tokenValue
             }
         }
-        console.log(str)
         // Nothing matched — no more tokens to hand out.
         throw new SyntaxError(`Unexpected token: ${str[0]}`);
     }
