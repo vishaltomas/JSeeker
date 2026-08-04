@@ -1,7 +1,10 @@
-macro:
-    Name: (fw : 200 |fs : 24 | aligin: 'center').
-main:
-    Name: Vishal Thomas
+macro:(
+    Name: (fw : 200 ,fs : 24 , aligin: 'center'),
+)
+main:(
+    Name: 'Vishal Thomas'
+)
+    
 /*
 < Dublin 15, Ireland | +353 89 471 2696 | vishaltomas@outlook.com >
 < linkedin.com/in/vishaltomas | github.com/vishaltomas > 

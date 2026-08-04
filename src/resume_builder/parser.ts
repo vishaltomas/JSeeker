@@ -1,10 +1,6 @@
-import YAML from 'yaml';
-import fs from 'fs';
-import type { Store } from "../main/store";
 import { Tokenizer } from './tokenizer';
 import { Token } from './types';
-import { throws } from 'assert';
-import { Variable } from 'lucide-react';
+
 
 // Implementing a Recursive Descent Parser
 class ParseTokenResponse{
@@ -19,16 +15,14 @@ class ParseTokenResponse{
         return this._tokens[this._current];
     }
     _previous(){
-        if (this._current)
-            return this._tokens[this._current - 1];
-        return {value: null};
+        return this._tokens[this._current - 1];
     }
     _isEOF(){
         return this._peek().type == 'EOF'
     }
     _advance(){
-        if(!this._isEOF) this._current++;
-        return this._previous;
+        if(!this._isEOF()) this._current++;
+        return this._previous();
     }
     // Consumes the current token and checks whether the type and value
     // is same as the arguments passed to function if not throw error or 
@@ -41,67 +35,89 @@ class ParseTokenResponse{
             throw new SyntaxError(`Unexpected end of input, expected type: ${tokenType}`);
         }
         if(token.type !==  tokenType){
-            throw new SyntaxError(`Unexpected token ${token.value} expected of type: ${token.type}`);
+            throw new SyntaxError(`Unexpected token [${this._current}] : ${token.value} expected of type: ${token.type}`);
         }
         if(tokenValue && !tokenValue.includes(token.value)){
-            throw new SyntaxError(`Unexpected token: ${token.value}  of type ${token.type}`);
+            throw new SyntaxError(`Unexpected token [${this._current}]  : ${token.value}  of type ${token.type}`);
         }
-        this._advance()
-        return token
+        return this._advance()
     }
     // Context Free Grammar
     // Rules implementation
 
-    // block -> '(' statement* ')'
+    // block -> '(' (statement ','?) ? ')'
+    // statementSeparator -> ','
     block(){
-        this._consume('PUNCTUATION', '(');
-
+        this._consume('Punctuation', '(');
+        // collect all statements
         const statements = [];
-        while(this._peek().value !== ')') 
+        while(!this._isEOF() && this._peek().value !== ')') 
             {
                 statements.push(this.statement());
+                if(this._peek().value == ',') this._advance();
             }
-        this._consume('PUNCTUATION', ')');
+        this._consume('Punctuation', ')');
         return {
-            type: 'BlockStatments',
+            type: 'BlockStatment',
             body: statements
         };
 
     }
-    // statement -> varaibleDeclaration | exprStatement
+    
+    // statement -> IDENTIFIER ':' block | expression 
     statement(){
-        if(this._peek().type == 'IDENTIFIER') return this.variableDeclaration();
-        return this.exprStatement();
-    }
-
-    // exprStatement -> expression '.| \|'
-    exprStatement(){
-        const expr = this.expression();
-        this._consume('PUNCTUATION', ['|', '.'])
-        return {
-            type: 'ExpressionStatement',
-            expression: expr
-        }
-    }
-    // variableDeclaration -> IDENTIFIER ':' block | expression ('|' | '.')
-    variableDeclaration(){
-        const identifier = this._consume('IDENTIFIER');
+        const identifier = this._consume('Identifier');
         // consume the ':' operator
-        this._consume('PUNCTUATION', ':');
-        let initializer = null;
+        this._consume('Operator', ':');
+        let initializer;
         if(this._peek().value == '(') initializer = this.block(); 
         else initializer = this.expression(); 
-        this._consume('PUNCTUATION', ['|', '.'])
         return {
-            type:this.variableDeclaration,
+            type:'Statement',
             identifier,
             initializer
         }
     }
+    // Binary operator -> |
+    // expression -> ((NUMERIC | STRING ) ( | expression )*
+    expression(){
+        let expr = {};
+        switch(this._peek().type){
+            case 'NumericLiteral':{ expr = {
+                type: 'Literal',
+                value: this._advance().value
+            }; break;}
+            case 'StringLiteral': {expr = {
+                type: 'Literal',
+                value: this._advance().value
+               
+            }; break;}
+            default: throw new SyntaxError('Unidentified literal'); 
+        }
+        while(!this._isEOF() && this._peek().value == '|'){
+            const operator = this._advance().value;
+            const right = this.expression();
+            expr = {
+                type: 'BinaryExpression',
+                operator,
+                left: expr,
+                right
+            };
+        }
+        return expr;
+    }
 
-    expression(){}
-
-
+    // program -> statements *
+    program(){
+        const statements = []
+        while(!this._isEOF()){
+            statements.push(this.statement());
+        }
+        return {
+            type:'Program',
+            body: statements
+        }
+    }
 }
 
 export class Parser{
@@ -109,6 +125,7 @@ export class Parser{
     _tokenizer : Tokenizer;
     _lookahead : Token | null = null;
     _tokens: Token[] = []
+    _parseTokenResponse: ParseTokenResponse | null = null;
     constructor(){
         this._string = "";
         this._tokenizer = new Tokenizer();
@@ -116,7 +133,14 @@ export class Parser{
     parse(content: string){
         this._string = content;
         this._tokenizer.init(content)
-        return this.Program();
+        const tokens = this.Program().body;
+        this._parseTokenResponse = new ParseTokenResponse(tokens);
+        let counter = 1;
+        tokens.forEach(element => {
+            console.log(`${counter}: ${JSON.stringify(element)}`)
+            counter++;
+        });
+        return this._parseTokenResponse.program();
     }
     Program(){
         // Collect all the tokens from  the file

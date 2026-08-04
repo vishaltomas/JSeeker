@@ -4,10 +4,7 @@ import { Token } from './types';
 // Every pattern must be anchored with ^: _match advances the cursor by the
 // match length alone, so a pattern that matches further into the string leaves
 // the cursor short and knocks the rest of the token stream out of alignment.
-const Keywords = [
-    'macro',
-    'main'
-]
+// const Keywords : string[]= []
 
 const tokenSpec : [RegExp, string|null][]= [
     [/^\d+/, 'NUMBER'],
@@ -19,11 +16,11 @@ const tokenSpec : [RegExp, string|null][]= [
     [/^\/\/.*/, null],
     [/^\/\*[\s\S]*?\*\//, null],
     // Operators
-    [/^[:]/, 'OPERATOR'],
+    [/^[:\|]/, 'OPERATOR'],
     // Punctuation
-    [/^[\(\)\|\.]/, 'PUNCTUATION'],
+    [/^[\(\)\,]/, 'PUNCTUATION'],
     //Identifier and Keywords
-    [new RegExp(`^(${Keywords.join('|')})`), 'KEYWORD'],
+    // [new RegExp(`^(${Keywords.join('|')})`), 'KEYWORD'],
     [/^[a-zA-Z][a-zA-Z\_0-9]*/, 'IDENTIFIER']
 ] 
 
