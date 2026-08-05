@@ -1,5 +1,5 @@
 import { Tokenizer } from './tokenizer';
-import { Token } from './types';
+import { ASTNode, Token } from './types';
 
 
 // Implementing a Recursive Descent Parser
@@ -35,7 +35,7 @@ class ParseTokenResponse{
             throw new SyntaxError(`Unexpected end of input, expected type: ${tokenType}`);
         }
         if(token.type !==  tokenType){
-            throw new SyntaxError(`Unexpected token [${this._current}] : ${token.value} expected of type: ${token.type}`);
+            throw new SyntaxError(`Unexpected token [${this._current}] : ${token.value} of type ${token.type}, expected type: ${tokenType}`);
         }
         if(tokenValue && !tokenValue.includes(token.value)){
             throw new SyntaxError(`Unexpected token [${this._current}]  : ${token.value}  of type ${token.type}`);
@@ -47,41 +47,60 @@ class ParseTokenResponse{
 
     // block -> '(' (statement ','?) ? ')'
     // statementSeparator -> ','
-    block(){
+    block(): ASTNode{
         this._consume('Punctuation', '(');
         // collect all statements
         const statements = [];
-        while(!this._isEOF() && this._peek().value !== ')') 
+        while(!this._isEOF() && this._peek().value !== ')')
             {
                 statements.push(this.statement());
                 if(this._peek().value == ',') this._advance();
             }
         this._consume('Punctuation', ')');
         return {
-            type: 'BlockStatment',
+            type: 'BlockStatement',
             body: statements
         };
 
     }
-    
-    // statement -> IDENTIFIER ':' block | expression 
-    statement(){
+
+    // element -> KEYWORD block
+    element(): ASTNode{
+        const value = this._consume('Keyword').value;
+        const args = this.block();
+        return {
+            type: 'Keyword',
+            value,
+            args
+        };
+    }
+
+    // statement -> KEYWORD | IDENTIFIER ':' (KEYWORD | block | expression) |
+    statement(): ASTNode{
+        // A bare keyword call is positional — `Block(Cell(...), Cell(...))`
+        // names none of its children, so there's no `IDENTIFIER ':'` to consume.
+        if(this._peek().type == 'Keyword') return this.element();
         const identifier = this._consume('Identifier');
         // consume the ':' operator
         this._consume('Operator', ':');
         let initializer;
-        if(this._peek().value == '(') initializer = this.block(); 
-        else initializer = this.expression(); 
+        if(this._peek().value == '(')  initializer = this.block();
+        else if(this._peek().type == 'Keyword') initializer = this.element();
+        else initializer = this.expression();
+
         return {
             type:'Statement',
             identifier,
             initializer
         }
     }
+
+
+
     // Binary operator -> |
     // expression -> ((NUMERIC | STRING ) ( | expression )*
-    expression(){
-        let expr = {};
+    expression(): ASTNode{
+        let expr: ASTNode;
         switch(this._peek().type){
             case 'NumericLiteral':{ expr = {
                 type: 'Literal',
@@ -108,7 +127,7 @@ class ParseTokenResponse{
     }
 
     // program -> statements *
-    program(){
+    program(): ASTNode{
         const statements = []
         while(!this._isEOF()){
             statements.push(this.statement());

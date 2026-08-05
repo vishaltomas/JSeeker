@@ -4,7 +4,9 @@ import { Token } from './types';
 // Every pattern must be anchored with ^: _match advances the cursor by the
 // match length alone, so a pattern that matches further into the string leaves
 // the cursor short and knocks the rest of the token stream out of alignment.
-// const Keywords : string[]= []
+const Keywords : Set<string>= new Set([
+    'Block', 'Cell'
+])
 
 const tokenSpec : [RegExp, string|null][]= [
     [/^\d+/, 'NUMBER'],
@@ -19,8 +21,7 @@ const tokenSpec : [RegExp, string|null][]= [
     [/^[:\|]/, 'OPERATOR'],
     // Punctuation
     [/^[\(\)\,]/, 'PUNCTUATION'],
-    //Identifier and Keywords
-    // [new RegExp(`^(${Keywords.join('|')})`), 'KEYWORD'],
+    //Identifier
     [/^[a-zA-Z][a-zA-Z\_0-9]*/, 'IDENTIFIER']
 ] 
 
@@ -66,6 +67,12 @@ export class Tokenizer{
             if (tokenValue == null) continue;
             // skip left-end whitespaces
             if(tokenType == null) return this.getNextToken(); 
+            else if (tokenType == 'IDENTIFIER') {
+                return {
+                    type: Keywords.has(tokenValue) ? 'KEYWORD' : 'IDENTIFIER',
+                    value: tokenValue
+                }
+            }
             return {
                 type: tokenType,
                 value: tokenValue
