@@ -71,7 +71,23 @@ export interface Store {
   settings: Settings;
   /** Whether the user has been through the first-run document-upload flow. */
   onboarded: boolean;
+  /** `.resb` source for the resume builder — see src/resume_builder/. */
+  builderSource: string;
 }
+
+/** Seeds an empty builder so the first visit compiles to something visible
+ * rather than a blank pane. */
+export const STARTER_BUILDER_SOURCE = `macro:(
+    Name: Cell(fw : 700, fs : 28, align : 'Center'),
+    Contact: Block(
+        Cell(fs : 12), Cell(fs : 12), Cell(fs : 12)
+    )
+)
+main:(
+    Name: 'Your Name',
+    Contact: 'city, country' | 'you@example.com' | 'github.com/you'
+)
+`;
 
 function normalizeSettings(s?: Partial<Settings>): Settings {
   return {
@@ -95,6 +111,7 @@ function defaultStore(): Store {
     resumeFiles: [],
     settings: normalizeSettings(),
     onboarded: false,
+    builderSource: STARTER_BUILDER_SOURCE,
   };
 }
 
@@ -146,7 +163,12 @@ export function loadStore(): Store {
       resumeFiles = Array.isArray(parsed.resumeFiles) ? parsed.resumeFiles : [];
     }
 
-    const store: Store = { data, resume, resumeFiles, settings, onboarded };
+    // Absent for stores written before the builder existed — seed rather than
+    // leaving the editor empty on upgrade.
+    const builderSource =
+      typeof parsed.builderSource === "string" ? parsed.builderSource : STARTER_BUILDER_SOURCE;
+
+    const store: Store = { data, resume, resumeFiles, settings, onboarded, builderSource };
     if (needsResave) saveStore(store);
     return store;
   } catch {

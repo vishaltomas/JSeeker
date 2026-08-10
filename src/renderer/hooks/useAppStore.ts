@@ -19,6 +19,7 @@ function emptyStore(): Store {
       extensionSyncToken: "",
     },
     onboarded: false,
+    builderSource: "",
   };
 }
 

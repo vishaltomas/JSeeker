@@ -52,6 +52,8 @@ export interface Store {
   settings: Settings;
   /** Whether the user has been through the first-run document-upload flow. */
   onboarded: boolean;
+  /** `.resb` source for the resume builder — see src/resume_builder/. */
+  builderSource: string;
 }
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };

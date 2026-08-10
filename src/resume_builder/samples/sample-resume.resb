@@ -1,11 +1,12 @@
 macro:(
-    Name: Cell(fw : 200 ,fs : 24 , aligin: 'center'),
+    Name: Cell(fw : 200 ,fs : 24 , align: 'center'),
     Adresss_Phone_email: Block(
         Cell(fw : 50 ,fs : 12 ), Cell(fw : 50 ,fs : 12 ), Cell(fw : 50 ,fs : 12 )
         ),
 )
 main:(
-    Name: 'Vishal Thomas'
+    Name: 'Vishal Thomas',
+    Adresss_Phone_email: 'Dublin 15, Ireland' | '+353 89 471 2696' | 'vishaltomas@outlook.com'
 )
     
 /*

@@ -29,7 +29,7 @@ class ParseTokenResponse{
     // else advance to next token
     _consume(tokenType: string, tokenValue: string[] | string | null = null){
         const token = this._peek();
-        // conver to array if its only string
+        // convert to array if its only string
         tokenValue =  !tokenValue || Array.isArray(tokenValue) ? tokenValue : [tokenValue] 
         if(token == null){
             throw new SyntaxError(`Unexpected end of input, expected type: ${tokenType}`);
@@ -75,11 +75,11 @@ class ParseTokenResponse{
         };
     }
 
-    // statement -> KEYWORD | IDENTIFIER ':' (KEYWORD | block | expression) |
+    // statement -> IDENTIFIER ':' (KEYWORD | block | expression) |
     statement(): ASTNode{
-        // A bare keyword call is positional — `Block(Cell(...), Cell(...))`
-        // names none of its children, so there's no `IDENTIFIER ':'` to consume.
+        // TODO: Should be Moved to block
         if(this._peek().type == 'Keyword') return this.element();
+        /////////////////////////////////
         const identifier = this._consume('Identifier');
         // consume the ':' operator
         this._consume('Operator', ':');
@@ -149,16 +149,22 @@ export class Parser{
         this._string = "";
         this._tokenizer = new Tokenizer();
     }
+    /** Dumps the token stream to the console. Off by default: the editor
+     *  re-parses on every keystroke, and it would also pollute stdout when the
+     *  runner's AST output is redirected to a file. */
+    debugTokens: boolean = false;
     parse(content: string){
         this._string = content;
         this._tokenizer.init(content)
         const tokens = this.Program().body;
         this._parseTokenResponse = new ParseTokenResponse(tokens);
-        let counter = 1;
-        tokens.forEach(element => {
-            console.log(`${counter}: ${JSON.stringify(element)}`)
-            counter++;
-        });
+        if(this.debugTokens){
+            let counter = 1;
+            tokens.forEach(element => {
+                console.log(`${counter}: ${JSON.stringify(element)}`)
+                counter++;
+            });
+        }
         return this._parseTokenResponse.program();
     }
     Program(){

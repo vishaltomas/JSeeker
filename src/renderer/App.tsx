@@ -3,12 +3,13 @@ import { useAppStore } from "./hooks/useAppStore";
 import { Header } from "./components/Header";
 import { ProfileView } from "./components/ProfileView";
 import { ChatView } from "./components/ChatView";
+import { BuilderView } from "./components/BuilderView";
 import { SettingsView } from "./components/SettingsView";
 import { FooterBar } from "./components/FooterBar";
 import { ResumeOnboarding } from "./components/onboarding/ResumeOnboarding";
 import { WelcomeSplash } from "./components/welcome/WelcomeSplash";
 
-type View = "profile" | "chat" | "settings";
+type View = "profile" | "chat" | "builder" | "settings";
 
 export default function App() {
   const { store, persist, loaded } = useAppStore();
@@ -40,6 +41,7 @@ export default function App() {
           (Profile) and chat history survive switching views. */}
       <ProfileView visible={view === "profile"} store={store} persist={persist} />
       <ChatView visible={view === "chat"} />
+      <BuilderView visible={view === "builder"} store={store} persist={persist} />
       <SettingsView
         visible={view === "settings"}
         store={store}

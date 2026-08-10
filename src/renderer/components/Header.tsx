@@ -1,9 +1,9 @@
-import { MessageCircle, Settings as SettingsIcon, User } from "lucide-react";
+import { FileText, MessageCircle, Settings as SettingsIcon, User } from "lucide-react";
 import { cx } from "../ui";
 
 interface HeaderProps {
-  view: "profile" | "chat" | "settings";
-  onNavigate: (view: "profile" | "chat") => void;
+  view: "profile" | "chat" | "builder" | "settings";
+  onNavigate: (view: "profile" | "chat" | "builder") => void;
   onOpenSettings: () => void;
 }
 
@@ -36,6 +36,10 @@ export function Header({ view, onNavigate, onOpenSettings }: HeaderProps) {
         <button className={navButtonClass(view === "chat")} onClick={() => onNavigate("chat")}>
           <MessageCircle size={15} />
           Chat
+        </button>
+        <button className={navButtonClass(view === "builder")} onClick={() => onNavigate("builder")}>
+          <FileText size={15} />
+          Builder
         </button>
         <span className="flex-1" />
         <button
