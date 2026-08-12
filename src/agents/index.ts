@@ -3,23 +3,23 @@ import { randomUUID } from "crypto";
 import * as path from "path";
 import type { Store, StructuredResume } from "../main/store";
 import { emptyStructuredResume, loadStore } from "../main/store";
-import type { ChatMessage, FieldDescriptor, FieldMapping, ResumeFields } from "./types";
-import { chatWithOllama, parseResumeWithOllama, planAutofillWithOllama } from "./ollama";
-import { chatWithClaude, parseResumeWithClaude, planAutofillWithClaude } from "./claude";
+import type { ChatMessage, ChatSink, FieldFill, PageSnapshot, ResumeFields } from "./types";
+import { chatWithOllama, parseResumeWithOllama, planPageAutofillWithOllama } from "./ollama";
+import { chatWithClaude, parseResumeWithClaude, planPageAutofillWithClaude } from "./claude";
 import { extractPdfText } from "./resumeExtract";
 
 export { bootstrapOllama } from "./ollama";
 
-/** Dispatches the autofill fallback to whichever model provider is
- * configured — called from the browser extension's local HTTP route (see
+/** Dispatches whole-page autofill to whichever model provider is configured
+ * — called from the browser extension's local HTTP route (see
  * src/main/extensionServer.ts POST /autofill). */
-export async function planAutofillWithLLM(
+export async function planPageAutofill(
   store: Store,
-  fields: FieldDescriptor[]
-): Promise<FieldMapping[]> {
+  snapshot: PageSnapshot
+): Promise<FieldFill[]> {
   return store.settings.provider === "claude"
-    ? planAutofillWithClaude(store, fields)
-    : planAutofillWithOllama(store, fields);
+    ? planPageAutofillWithClaude(store, snapshot)
+    : planPageAutofillWithOllama(store, snapshot);
 }
 
 // Onboarding step: read one or more uploaded documents and (for PDFs)
@@ -78,11 +78,26 @@ ipcMain.handle(
   }
 );
 
-ipcMain.on("chat:send", async (event, history: ChatMessage[]) => {
-  const store = loadStore();
+/** Streams a chat reply from whichever provider is configured into `sink` —
+ * shared by the app's own chat panel (over IPC, below) and the browser
+ * extension's in-page panel (over SSE, see main/extensionServer.ts). */
+export async function streamChat(
+  store: Store,
+  history: ChatMessage[],
+  sink: ChatSink,
+  pageContext?: string
+): Promise<void> {
   if (store.settings.provider === "claude") {
-    await chatWithClaude(event, store, history);
+    await chatWithClaude(sink, store, history, pageContext);
   } else {
-    await chatWithOllama(event, store, history);
+    await chatWithOllama(sink, store, history, pageContext);
   }
+}
+
+ipcMain.on("chat:send", async (event, history: ChatMessage[]) => {
+  await streamChat(loadStore(), history, {
+    delta: (text) => event.sender.send("chat:delta", text),
+    done: (full) => event.sender.send("chat:done", full),
+    error: (message) => event.sender.send("chat:error", message),
+  });
 });

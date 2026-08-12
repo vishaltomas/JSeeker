@@ -99,6 +99,24 @@ export type OllamaStatus =
   | { state: "ready"; model: string }
   | { state: "error"; message: string };
 
+/** One autofill attempt by the browser extension, as the app sees it — see
+ * main/extensionServer.ts. Updated in place as the attempt progresses, so
+ * entries are merged by `id`. */
+export interface ExtensionActivity {
+  id: string;
+  at: number;
+  state: "reading" | "filled" | "error";
+  url?: string;
+  title?: string;
+  /** Fillable controls the extension found on the page. */
+  fields?: number;
+  /** Values the model returned. */
+  planned?: number;
+  /** Values that actually landed — absent until the extension reports back. */
+  applied?: number;
+  message?: string;
+}
+
 export interface Api {
   versions: { node: string; chrome: string; electron: string };
   loadStore: () => Promise<Store>;
@@ -111,12 +129,17 @@ export interface Api {
     read: (filePath: string) => Promise<{ content?: string; error?: string }>;
     write: (filePath: string, content: string) => Promise<{ ok?: boolean; error?: string }>;
     create: (name?: string, content?: string) => Promise<{ file?: BuilderFile; error?: string }>;
+    rename: (filePath: string, name: string) => Promise<{ file?: BuilderFile; error?: string }>;
+    /** Moves the document to the OS bin. */
+    remove: (filePath: string) => Promise<{ ok?: boolean; error?: string }>;
     /** Reads a `.resb` file from anywhere on disk, without importing it. */
     pick: () => Promise<{ canceled?: boolean; name?: string; content?: string; error?: string }>;
   };
   /** Renders a compiled resume document to PDF, prompting for a location. */
   exportPdf: (html: string, name?: string) => Promise<PdfExportResult>;
-  extensionInfo: () => Promise<{ port: number }>;
+  extensionInfo: () => Promise<{ port: number; listening: boolean; error?: string }>;
+  onExtensionActivity: (cb: (entry: ExtensionActivity) => void) => void;
+  getExtensionActivity: () => Promise<ExtensionActivity[]>;
   /** Opens an http(s) URL in the user's browser; false if the scheme was refused. */
   openExternal: (url: string) => Promise<boolean>;
   onOllamaStatus: (cb: (status: OllamaStatus) => void) => void;

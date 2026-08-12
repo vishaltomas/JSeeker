@@ -1,9 +1,15 @@
-import { FileText, MessageCircle, Settings as SettingsIcon, User } from "lucide-react";
+import {
+  Activity as ActivityIcon,
+  FileText,
+  MessageCircle,
+  Settings as SettingsIcon,
+  User,
+} from "lucide-react";
 import { cx } from "../ui";
 
 interface HeaderProps {
-  view: "profile" | "chat" | "builder" | "settings";
-  onNavigate: (view: "profile" | "chat" | "builder") => void;
+  view: "profile" | "chat" | "builder" | "activity" | "settings";
+  onNavigate: (view: "profile" | "chat" | "builder" | "activity") => void;
   onOpenSettings: () => void;
 }
 
@@ -40,6 +46,13 @@ export function Header({ view, onNavigate, onOpenSettings }: HeaderProps) {
         <button className={navButtonClass(view === "builder")} onClick={() => onNavigate("builder")}>
           <FileText size={15} />
           Builder
+        </button>
+        <button
+          className={navButtonClass(view === "activity")}
+          onClick={() => onNavigate("activity")}
+        >
+          <ActivityIcon size={15} />
+          Auto Tracker
         </button>
         <span className="flex-1" />
         <button

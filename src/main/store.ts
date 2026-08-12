@@ -7,9 +7,9 @@ import { DEFAULT_FONT } from "../resume_builder/fonts";
 import { DEFAULT_ACCENT } from "../resume_builder/colors";
 
 /** Open key-value bag — no fixed schema. Some conventional keys (see
- * agents/types.ts RESUME_ANCHOR_KEYS) are used by the browser extension's
- * heuristic form matcher, but anything else the user or resume extraction
- * adds lives here too. */
+ * agents/types.ts RESUME_ANCHOR_KEYS) are what resume extraction aims for,
+ * but anything else the user or the model adds lives here too — it all goes
+ * to the model verbatim when filling a form. */
 export type ProfileData = Record<string, string>;
 
 export interface ResumeExperience {
@@ -59,7 +59,7 @@ export interface Settings {
    * src/main/extensionServer.ts. Generated once and kept stable; not a
    * secret protecting against filesystem access (store.json is plaintext
    * like everything else here), just enough to stop other local processes
-   * or web pages from silently reading profile data or triggering fills. */
+   * or web pages from silently triggering fills. */
   extensionSyncToken: string;
 }
 

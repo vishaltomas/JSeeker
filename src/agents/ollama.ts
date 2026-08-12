@@ -3,13 +3,13 @@ import { spawn } from "child_process";
 import type { Store } from "../main/store";
 import { loadStore } from "../main/store";
 import { getMainWindow } from "../main/window";
-import type { ChatMessage, FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
+import type { ChatMessage, ChatSink, FieldFill, PageSnapshot, ResumeExtraction } from "./types";
 import { RESUME_ANCHOR_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
 import {
-  buildAutofillPrompt,
+  buildPageAutofillPrompt,
   buildResumeExtractionPrompt,
   buildSystemPrompt,
-  parseFieldMappings,
+  parseFieldFills,
   parseResumeExtraction,
 } from "./prompts";
 
@@ -18,23 +18,43 @@ export const DEFAULT_HOST = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
 // on low-VRAM consumer GPUs, which is what actually runs this app's default.
 export const DEFAULT_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:3b";
 
+/** Structured-output schema for a list of field fills — same reasoning as
+ * RESUME_EXTRACTION_SCHEMA below: a schema keeps small local models from
+ * answering with a differently-shaped JSON object. */
+const FIELD_FILLS_SCHEMA = {
+  type: "object",
+  properties: {
+    fills: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          value: { type: "string" },
+        },
+        required: ["id", "value"],
+      },
+    },
+  },
+  required: ["fills"],
+};
+
 /**
- * Ask the local Ollama model to map leftover, unrecognized form fields to
- * values from the active profile — the fallback the browser extension calls
- * (via src/main/extensionServer.ts) for fields its own heuristic matcher
- * couldn't confidently label.
+ * Ask the local Ollama model to read a whole page and decide what to type
+ * into it — the browser extension hands over a snapshot of the page (see
+ * src/main/extensionServer.ts) and the model picks out the fields itself.
  */
-export async function planAutofillWithOllama(
+export async function planPageAutofillWithOllama(
   store: Store,
-  fields: FieldDescriptor[]
-): Promise<FieldMapping[]> {
+  snapshot: PageSnapshot
+): Promise<FieldFill[]> {
   const host = store.settings.ollamaHost || DEFAULT_HOST;
   const model = store.settings.ollamaModel || DEFAULT_MODEL;
   const prompt = [
-    buildAutofillPrompt(store, fields),
+    buildPageAutofillPrompt(store, snapshot),
     "",
-    'Reply with ONLY a JSON array of objects: {"index": <field index>, "value": "<text to enter>"}.',
-    "Reply with the JSON array and nothing else.",
+    'Reply with ONLY {"fills": [{"id": "<the field\'s jid>", "value": "<what to enter>"}]}.',
+    "Use an empty array if there is nothing you can confidently fill.",
   ].join("\n");
 
   const res = await fetch(`${host}/api/chat`, {
@@ -44,7 +64,11 @@ export async function planAutofillWithOllama(
       model,
       messages: [{ role: "user", content: prompt }],
       stream: false,
-      format: "json",
+      format: FIELD_FILLS_SCHEMA,
+      // A page snapshot is far longer than this app's other prompts; the
+      // default 2k context would silently truncate away the second half of
+      // the form (and with it, the ids the answer has to reference).
+      options: { num_ctx: 32768 },
     }),
   });
 
@@ -55,7 +79,7 @@ export async function planAutofillWithOllama(
 
   const body = await res.json();
   const content: string = body?.message?.content ?? "";
-  return parseFieldMappings(content);
+  return parseFieldFills(content);
 }
 
 /** Structured-output schema for ResumeExtraction — every field required
@@ -119,15 +143,16 @@ function friendlyOllamaError(err: unknown, host: string, model: string): string 
 // we prepend a system prompt (seeded with the active profile), stream tokens
 // from Ollama's NDJSON response, and relay each chunk back.
 export async function chatWithOllama(
-  event: Electron.IpcMainEvent,
+  sink: ChatSink,
   store: Store,
-  history: ChatMessage[]
+  history: ChatMessage[],
+  pageContext?: string
 ): Promise<void> {
   const host = store.settings.ollamaHost || DEFAULT_HOST;
   const model = store.settings.ollamaModel || DEFAULT_MODEL;
 
   const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt(store) },
+    { role: "system", content: buildSystemPrompt(store, pageContext) },
     ...history,
   ];
 
@@ -135,7 +160,15 @@ export async function chatWithOllama(
     const res = await fetch(`${host}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages, stream: true }),
+      // The extension's in-page panel can put a whole job posting in the
+      // system prompt, which overflows Ollama's small default context and
+      // would silently drop the earliest messages.
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        options: { num_ctx: pageContext ? 16384 : 8192 },
+      }),
     });
 
     if (!res.ok || !res.body) {
@@ -164,14 +197,14 @@ export async function chatWithOllama(
         const chunk: string = obj.message?.content ?? "";
         if (chunk) {
           full += chunk;
-          event.sender.send("chat:delta", chunk);
+          sink.delta(chunk);
         }
       }
     }
 
-    event.sender.send("chat:done", full);
+    sink.done(full);
   } catch (err) {
-    event.sender.send("chat:error", friendlyOllamaError(err, host, model));
+    sink.error(friendlyOllamaError(err, host, model));
   }
 }
 

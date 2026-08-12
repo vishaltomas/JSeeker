@@ -4,12 +4,13 @@ import { Header } from "./components/Header";
 import { ProfileView } from "./components/ProfileView";
 import { ChatView } from "./components/ChatView";
 import { BuilderView } from "./components/BuilderView";
+import { ActivityView } from "./components/ActivityView";
 import { SettingsView } from "./components/SettingsView";
 import { FooterBar } from "./components/FooterBar";
 import { ResumeOnboarding } from "./components/onboarding/ResumeOnboarding";
 import { WelcomeSplash } from "./components/welcome/WelcomeSplash";
 
-type View = "profile" | "chat" | "builder" | "settings";
+type View = "profile" | "chat" | "builder" | "activity" | "settings";
 
 export default function App() {
   const { store, persist, loaded } = useAppStore();
@@ -42,6 +43,7 @@ export default function App() {
       <ProfileView visible={view === "profile"} store={store} persist={persist} />
       <ChatView visible={view === "chat"} />
       <BuilderView visible={view === "builder"} store={store} persist={persist} />
+      <ActivityView visible={view === "activity"} />
       <SettingsView
         visible={view === "settings"}
         store={store}

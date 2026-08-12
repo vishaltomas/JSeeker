@@ -54,6 +54,18 @@ interface PdfExportResult {
   error?: string;
 }
 
+interface ExtensionActivity {
+  id: string;
+  at: number;
+  state: "reading" | "filled" | "error";
+  url?: string;
+  title?: string;
+  fields?: number;
+  planned?: number;
+  applied?: number;
+  message?: string;
+}
+
 type OllamaStatus =
   | { state: "starting" }
   | { state: "pulling"; model: string; percent: number; detail: string }
@@ -83,6 +95,11 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke("builder:write", { path: filePath, content }),
     create: (name?: string, content?: string): Promise<{ file?: BuilderFile; error?: string }> =>
       ipcRenderer.invoke("builder:create", { name, content }),
+    rename: (filePath: string, name: string): Promise<{ file?: BuilderFile; error?: string }> =>
+      ipcRenderer.invoke("builder:rename", { path: filePath, name }),
+    /** Moves the document to the OS bin. */
+    remove: (filePath: string): Promise<{ ok?: boolean; error?: string }> =>
+      ipcRenderer.invoke("builder:delete", filePath),
     /** Reads a `.resb` file from anywhere on disk, without importing it. */
     pick: (): Promise<{ canceled?: boolean; name?: string; content?: string; error?: string }> =>
       ipcRenderer.invoke("builder:pick"),
@@ -91,7 +108,15 @@ contextBridge.exposeInMainWorld("api", {
    * location. `name` seeds the suggested file name. */
   exportPdf: (html: string, name?: string): Promise<PdfExportResult> =>
     ipcRenderer.invoke("pdf:export", { html, name }),
-  extensionInfo: (): Promise<{ port: number }> => ipcRenderer.invoke("extension:info"),
+  extensionInfo: (): Promise<{ port: number; listening: boolean; error?: string }> =>
+    ipcRenderer.invoke("extension:info"),
+  /** Live autofill attempts from the browser extension — see
+   * main/extensionServer.ts. */
+  onExtensionActivity: (cb: (entry: ExtensionActivity) => void): void => {
+    ipcRenderer.on("extension:activity", (_event, entry: ExtensionActivity) => cb(entry));
+  },
+  getExtensionActivity: (): Promise<ExtensionActivity[]> =>
+    ipcRenderer.invoke("extension:activity:get"),
   /** Opens an http(s) URL in the user's browser. Resolves false if the main
    * process rejected the scheme. */
   openExternal: (url: string): Promise<boolean> =>

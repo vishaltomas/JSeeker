@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import type { Store } from "../../types";
-import { btn, btnPrimary, fieldGroup, fieldInput, fieldLabel, panelH2, sectionHint, statusText } from "../../ui";
+import {
+  btn,
+  btnPrimary,
+  fieldGroup,
+  fieldInput,
+  fieldLabel,
+  panelH2,
+  sectionHint,
+  statusText,
+} from "../../ui";
 
 interface ExtensionPanelProps {
   store: Store;
@@ -14,12 +23,14 @@ function randomToken(): string {
     .join("");
 }
 
+type ServerInfo = { port: number; listening: boolean; error?: string };
+
 export function ExtensionPanel({ store, persist }: ExtensionPanelProps) {
-  const [port, setPort] = useState<number | null>(null);
+  const [server, setServer] = useState<ServerInfo | null>(null);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
-    window.api.extensionInfo().then(({ port }) => setPort(port));
+    window.api.extensionInfo().then(setServer);
   }, []);
 
   function copyToken(): void {
@@ -39,8 +50,9 @@ export function ExtensionPanel({ store, persist }: ExtensionPanelProps) {
         Install the extension from the <code>extension/</code> folder in this project (Chrome/Edge
         → <code>chrome://extensions</code> → enable Developer mode → Load unpacked), then paste the
         token below into its options page. With JSeeker running, click the extension's icon on any
-        job application page to fill in the form directly in your browser, using your saved profile
-        and resume.
+        job application page: it sends the page here, your configured model works out what each
+        field is asking for and answers it from your profile and resume, and the extension fills
+        the form in. It never submits anything — that stays yours.
       </p>
 
       <div className={fieldGroup}>
@@ -52,9 +64,16 @@ export function ExtensionPanel({ store, persist }: ExtensionPanelProps) {
 
       <div className={fieldGroup}>
         <label className={fieldLabel}>Local server</label>
-        <p className="text-[13px] text-ink">
-          {port ? `http://127.0.0.1:${port}` : "Starting…"}
-        </p>
+        {!server ? (
+          <p className="text-[13px] text-ink">Starting…</p>
+        ) : server.listening ? (
+          <p className="text-[13px] text-ink">http://127.0.0.1:{server.port} — running</p>
+        ) : (
+          <p className="text-[13px] text-status-error">
+            Not listening on port {server.port}
+            {server.error ? ` — ${server.error}` : ". Another copy of JSeeker may be running."}
+          </p>
+        )}
       </div>
 
       <button className={btn} onClick={copyToken}>
@@ -64,6 +83,13 @@ export function ExtensionPanel({ store, persist }: ExtensionPanelProps) {
         Regenerate token
       </button>
       <p className={statusText}>{status}</p>
+
+      <p className="mt-2 text-xs text-ink-faint">
+        Fills you run from the browser show up under <strong>Auto Tracker</strong> in the
+        top bar, as they happen. Press <code>Alt+J</code> on any page (or right-click →
+        Ask JSeeker about this page) for a chat panel that can read the posting you're
+        looking at.
+      </p>
     </section>
   );
 }

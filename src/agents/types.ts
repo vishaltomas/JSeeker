@@ -1,34 +1,39 @@
 export type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 
-/** A form field the browser extension's heuristic matcher couldn't
- * confidently label, sent to the local model as a fallback (see
- * src/main/extensionServer.ts POST /autofill). */
-export interface FieldDescriptor {
-  index: number;
-  tag: string;
-  type?: string;
-  name?: string;
-  id?: string;
-  placeholder?: string;
-  ariaLabel?: string;
-  autocomplete?: string;
-  label?: string;
-  context?: string;
-  options?: string[];
-  required?: boolean;
+/** Where a streamed chat reply goes. The app's own chat sends it over IPC to
+ * the renderer; the browser extension's in-page panel sends it out as SSE
+ * (see main/extensionServer.ts) — the providers don't need to know which. */
+export interface ChatSink {
+  delta(text: string): void;
+  done(full: string): void;
+  error(message: string): void;
 }
 
-export interface FieldMapping {
-  index: number;
+/** A snapshot of the page the browser extension is filling: the visible page
+ * text with every fillable control rendered as a tagged one-line element
+ * (see extension/content.js `__jseekerSerialize`). The model reads the ids
+ * out of this text itself — nothing on this side pre-labels the fields. */
+export interface PageSnapshot {
+  url?: string;
+  title?: string;
+  page: string;
+}
+
+/** One control the model decided to fill. `id` is the `jid="…"` it read from
+ * the snapshot; `value` is the text to type, the option to pick for a
+ * `<select>`, or "true" for the radio/checkbox that should be selected —
+ * extension/content.js knows each element's real type and interprets the
+ * string accordingly. */
+export interface FieldFill {
+  id: string;
   value: string;
 }
 
-/** Well-known profile keys the browser extension's heuristic form matcher
- * (extension/content.js SPECS) looks for by exact name — resume extraction
- * is guided (not restricted) to use these when the info is present, but can
- * add any other key it finds useful via `extraFields` below. Not a schema,
- * just a naming convention for the fields that benefit most from being
- * predictable. */
+/** Well-known profile keys — resume extraction is guided (not restricted) to
+ * use these when the info is present, but can add any other key it finds
+ * useful via `extraFields` below. Not a schema, just a naming convention
+ * that keeps the most-used fields predictably named, both in the Profile UI
+ * and in the profile block the autofill prompt builds. */
 export const RESUME_ANCHOR_KEYS = [
   "firstName",
   "lastName",
@@ -56,7 +61,7 @@ export type ResumeFields = Record<string, string>;
  * because structured-output "strict" JSON schema (both Ollama's and
  * Claude's) doesn't reliably support truly open `additionalProperties` —
  * an array of well-typed objects sidesteps that entirely, the same way
- * `FieldMapping[]` already does for autofill. */
+ * `FieldFill[]` already does for autofill. */
 export interface ExtraField {
   key: string;
   value: string;

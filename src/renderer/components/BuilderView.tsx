@@ -1,14 +1,18 @@
 import {
   Check,
+  Copy,
   Download,
   FilePlus,
   FileText,
   FolderOpen,
   LoaderCircle,
+  MoreVertical,
+  Pencil,
   Play,
   RefreshCw,
   Save,
   SaveOff,
+  Trash2,
   TriangleAlert,
   Zap,
   ZapOff,
@@ -50,6 +54,12 @@ const SAVE_DEBOUNCE_MS = 800;
 
 const EMPTY_SECTIONS: Sections = { macro: "", main: "", trailer: "" };
 
+/** How long the compiling overlay stays up at minimum. Compiling is
+ * synchronous and usually finishes in a few milliseconds — too fast to see —
+ * and a flicker reads as "nothing happened". Holding it briefly makes the
+ * press land, without being long enough to feel like waiting. */
+const COMPILE_FEEDBACK_MS = 400;
+
 /** Preview zoom steps, smallest first. */
 const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -75,10 +85,7 @@ const SECTION_TABS: { name: SectionName; label: string; hint: string }[] = [
   { name: "main", label: "Main", hint: "Content — the values those definitions render" },
 ];
 
-const TABS: { name: EditorTab; label: string; hint: string }[] = [
-  ...SECTION_TABS,
-  { name: "docs", label: "Docs", hint: "How to write .resb" },
-];
+const DOCS_TAB = { name: "docs" as const, label: "Docs", hint: "How to write .resb" };
 
 /** What the save indicator is showing. `idle` is a document nobody has touched
  * yet this session — there is nothing to have saved, so it just names the mode
@@ -164,6 +171,18 @@ function tabClass(active: boolean): string {
   return cx(
     "h-full cursor-pointer border-b-2 px-3",
     active ? "border-accent text-ink" : "border-transparent hover:text-ink"
+  );
+}
+
+/** Docs isn't a half of the document like Macro and Main are — it's reference
+ * material — so it sits apart at the other end of the bar and is coloured to
+ * say so rather than pretending to be a third section. */
+function docsTabClass(active: boolean): string {
+  return cx(
+    "h-full cursor-pointer border-b-2 px-3 font-medium",
+    active
+      ? "border-[#eab308] bg-[#eab308] text-[#1e1f22]"
+      : "border-transparent bg-[#eab308]/15 text-[#eab308] hover:bg-[#eab308]/25"
   );
 }
 
@@ -341,10 +360,30 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
     void save(pending.current.path, pending.current.source);
   }, [save]);
 
+  const [compiling, setCompiling] = useState(false);
+  const compileTimer = useRef<number>(0);
+  useEffect(() => () => window.clearTimeout(compileTimer.current), []);
+
   /** Renders whatever is in the editor right now — the Compile button and
    * Ctrl+Enter. Reads the ref so a shortcut fired from a stale closure still
-   * compiles the current text. */
-  const compileNow = useCallback(() => compile(pending.current.source), [compile]);
+   * compiles the current text.
+   *
+   * The work is deferred a frame so the overlay is on screen before the
+   * compile blocks the thread; painting them in the other order would show
+   * the spinner only after the thing it describes had already finished. */
+  const compileNow = useCallback(() => {
+    setCompiling(true);
+    const started = Date.now();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        compile(pending.current.source);
+        compileTimer.current = window.setTimeout(
+          () => setCompiling(false),
+          Math.max(0, COMPILE_FEEDBACK_MS - (Date.now() - started))
+        );
+      });
+    });
+  }, [compile]);
 
   useEffect(() => {
     if (!visible) return;
@@ -391,6 +430,82 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
     }
     await refresh();
     await open(result.file.path);
+  }
+
+  /** Duplicates the open document, copying what's in the editor rather than
+   * what's on disk — a copy taken mid-edit should be of what you can see. The
+   * workspace names it around the collision (…-2, …-3), and the copy is what
+   * you're left editing. */
+  async function duplicateFile() {
+    const { path: filePath, source: text } = pending.current;
+    if (!filePath) return;
+    const stem = (filePath.split(/[\\/]/).pop() ?? "").replace(/\.resb$/i, "");
+    await create(stem, text);
+  }
+
+  /** Which row's action menu is open, and which row is being renamed — both
+   * hold a path, since a row is only ever identified by one. */
+  const [menuFor, setMenuFor] = useState("");
+  const [renaming, setRenaming] = useState("");
+  const [renameDraft, setRenameDraft] = useState("");
+
+  // A menu that outlives the click that dismissed it is worse than no menu.
+  useEffect(() => {
+    if (!menuFor) return;
+    const close = () => setMenuFor("");
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [menuFor]);
+
+  function startRename(file: BuilderFile) {
+    setMenuFor("");
+    setRenaming(file.path);
+    setRenameDraft(file.name.replace(/\.resb$/i, ""));
+  }
+
+  async function commitRename(file: BuilderFile) {
+    const wanted = renameDraft.trim();
+    setRenaming("");
+    if (!wanted || wanted === file.name.replace(/\.resb$/i, "")) return;
+
+    const result = await window.api.builder.rename(file.path, wanted);
+    if (!result.file) {
+      setFileStatus(result.error ?? "Could not rename that file.");
+      return;
+    }
+    await refresh();
+    // The open document just moved: follow it, or the next save would write
+    // to a path that no longer exists and quietly recreate the old name.
+    if (file.path === pending.current.path) {
+      setOpenPath(result.file.path);
+      persist({ ...store, builderFilePath: result.file.path });
+    }
+  }
+
+  async function deleteFile(file: BuilderFile) {
+    setMenuFor("");
+    const confirmed = window.confirm(
+      `Delete ${file.name}? It goes to the recycle bin — the builder has no undo.`
+    );
+    if (!confirmed) return;
+
+    const result = await window.api.builder.remove(file.path);
+    if (result.error) {
+      setFileStatus(result.error);
+      return;
+    }
+    const listed = await refresh();
+    if (file.path !== pending.current.path) return;
+
+    // The open document is the one that went. Drop it before anything can
+    // autosave it back into existence, then fall through to whatever's left.
+    edited.current = false;
+    setDirty(false);
+    setOpenPath("");
+    setSections(EMPTY_SECTIONS);
+    compile(joinSections(EMPTY_SECTIONS));
+    persist({ ...store, builderFilePath: "" });
+    if (listed[0]) await open(listed[0].path);
   }
 
   async function importFile() {
@@ -550,6 +665,15 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
             </button>
             <button
               className={headerBtn}
+              onClick={() => void duplicateFile()}
+              disabled={!openPath}
+              title="Duplicate the open document"
+              aria-label="Duplicate the open document"
+            >
+              <Copy size={13} />
+            </button>
+            <button
+              className={headerBtn}
               onClick={() => void refreshFiles()}
               disabled={refreshing}
               title="Re-read the workspace folder"
@@ -566,20 +690,78 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
               </p>
             ) : (
               files.map((file) => (
-                <button
+                <div
                   key={file.path}
-                  onClick={() => void open(file.path)}
-                  title={file.path}
                   className={cx(
-                    "flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12.5px]",
+                    "group relative flex items-center text-[12.5px]",
                     file.path === openPath
                       ? "bg-surface-3 text-ink"
                       : "text-ink-soft hover:bg-surface-2 hover:text-ink"
                   )}
                 >
-                  <FileText size={13} className="flex-shrink-0 text-ink-faint" />
-                  <span className="truncate">{file.name}</span>
-                </button>
+                  {renaming === file.path ? (
+                    <input
+                      autoFocus
+                      className="min-w-0 flex-1 rounded-sm border border-accent bg-surface-0 px-2 py-1 text-[12.5px] text-ink outline-none"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void commitRename(file);
+                        // Escape abandons, and so does clicking away: a rename
+                        // nobody confirmed shouldn't happen by accident.
+                        if (e.key === "Escape") setRenaming("");
+                      }}
+                      onBlur={() => setRenaming("")}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => void open(file.path)}
+                        title={file.path}
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 py-1.5 text-left"
+                      >
+                        <FileText size={13} className="flex-shrink-0 text-ink-faint" />
+                        <span className="truncate">{file.name}</span>
+                      </button>
+                      <button
+                        // Kept out of the way until the row is pointed at,
+                        // then always visible for the open document.
+                        className={cx(
+                          "mr-1 flex-shrink-0 cursor-pointer rounded p-1 text-ink-faint hover:bg-surface-3 hover:text-white group-hover:opacity-100 focus:opacity-100",
+                          menuFor === file.path ? "opacity-100" : "opacity-0"
+                        )}
+                        title="Rename or delete"
+                        aria-label={`Actions for ${file.name}`}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => setMenuFor(menuFor === file.path ? "" : file.path)}
+                      >
+                        <MoreVertical size={13} />
+                      </button>
+                    </>
+                  )}
+
+                  {menuFor === file.path && (
+                    <div
+                      className="absolute right-1 top-full z-10 min-w-[120px] overflow-hidden rounded-md border border-line bg-surface-2 py-1 shadow-lg"
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-ink-soft hover:bg-surface-3 hover:text-white"
+                        onClick={() => startRename(file)}
+                      >
+                        <Pencil size={12} />
+                        Rename
+                      </button>
+                      <button
+                        className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-danger-text hover:bg-surface-3"
+                        onClick={() => void deleteFile(file)}
+                      >
+                        <Trash2 size={12} />
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
               ))
             )}
           </div>
@@ -603,52 +785,97 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
           style={{ flexGrow: editorShare, flexBasis: 0 }}
         >
           <div className={paneHeader}>
-            {TABS.map((t) => (
+            {SECTION_TABS.map((t) => (
               <button
                 key={t.name}
                 className={tabClass(tab === t.name)}
                 onClick={() => setTab(t.name)}
                 title={t.hint}
-                disabled={!openPath && t.name !== "docs"}
+                disabled={!openPath}
               >
                 {t.label}
               </button>
             ))}
-            <span className="flex-1" />
-            <span className="truncate normal-case tracking-normal text-ink-faint" title={openPath}>
-              {openName}
-            </span>
-            {!autosaveOn && (
-              <button
-                className={headerBtn}
-                onClick={saveNow}
-                disabled={!dirty || !openPath}
-                title="Save this document (Ctrl+S)"
-              >
-                <Save size={13} />
-                Save
-              </button>
-            )}
+            <span className="mx-1 h-4 w-px flex-shrink-0 bg-line" />
+
+            {/* Save, the autosave switch, and what the two of them are doing.
+                Each keeps a fixed width — the status text changes as documents
+                save, and everything beside it would otherwise shuffle sideways
+                every time it did. */}
             <button
-              className={cx(
-                "flex flex-shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 normal-case tracking-normal hover:bg-surface-3",
-                saveLabel.className
-              )}
+              className={cx(headerBtn, "w-7 justify-center")}
+              onClick={saveNow}
+              disabled={!dirty || !openPath}
+              title="Save this document (Ctrl+S)"
+              aria-label="Save this document"
+            >
+              <Save size={13} />
+            </button>
+            <button
+              role="switch"
+              aria-checked={autosaveOn}
+              aria-label="Autosave"
               onClick={toggleAutosave}
               title={
                 autosaveOn
                   ? "Autosave is on — click to save only when you ask"
                   : "Autosave is off — click to save changes automatically"
               }
-              aria-pressed={autosaveOn}
+              className="flex w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-md py-1 hover:bg-surface-3"
+            >
+              <span
+                className={cx(
+                  "relative h-3.5 w-7 rounded-full transition-colors",
+                  autosaveOn ? "bg-accent" : "bg-surface-3 border border-line-input"
+                )}
+              >
+                <span
+                  className={cx(
+                    "absolute top-[3px] h-2 w-2 rounded-full bg-white transition-all",
+                    autosaveOn ? "left-[16px]" : "left-[3px]"
+                  )}
+                />
+              </span>
+            </button>
+            <span
+              className={cx(
+                "flex w-[92px] flex-shrink-0 items-center gap-1 normal-case tracking-normal",
+                saveLabel.className
+              )}
+              title={autosaveOn ? "Autosave is on" : "Autosave is off"}
             >
               <SaveStateIcon
                 size={12}
-                className={cx(autosaveOn && saveState === "saving" && "animate-spin")}
+                className={cx(
+                  "flex-shrink-0",
+                  autosaveOn && saveState === "saving" && "animate-spin"
+                )}
               />
-              {saveLabel.text}
+              <span className="truncate">{saveLabel.text}</span>
+            </span>
+
+            <span className="flex-1" />
+            <button
+              className={docsTabClass(tab === DOCS_TAB.name)}
+              onClick={() => setTab(DOCS_TAB.name)}
+              title={DOCS_TAB.hint}
+            >
+              {DOCS_TAB.label}
             </button>
           </div>
+
+          {/* The open document's name, on its own line rather than squeezed
+              into the tab row — it's the answer to "which file am I editing",
+              which is worth more room than the corner of a toolbar. */}
+          {openPath && (
+            <div
+              className="flex flex-shrink-0 items-center gap-1.5 border-b border-line-subtle bg-surface-1 px-3 py-1 text-[11px] text-ink-soft"
+              title={openPath}
+            >
+              <FileText size={11} className="flex-shrink-0 text-ink-faint" />
+              <span className="truncate">{openName}</span>
+            </div>
+          )}
 
           {fileStatus && (
             <p
@@ -716,7 +943,7 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
                 openPath && stale && !autoCompileOn && "bg-accent-soft text-accent-light"
               )}
               onClick={compileNow}
-              disabled={!openPath}
+              disabled={!openPath || compiling}
               title="Render the editor's document into the preview (Ctrl+Enter)"
             >
               <Play size={13} />
@@ -814,7 +1041,15 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
               floats on the backdrop with its own margins, the way a PDF
               viewer shows a sheet, rather than the frame itself resizing.
               The document scrolls within the canvas once it outgrows it. */}
-          <div ref={paneRef} className="min-h-0 flex-1 overflow-hidden bg-[#525659]">
+          <div ref={paneRef} className="relative min-h-0 flex-1 overflow-hidden bg-[#525659]">
+            {compiling && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#525659]/75">
+                <span className="flex items-center gap-2 rounded-full border border-line bg-surface-2 px-3.5 py-2 text-[11.5px] text-ink-soft shadow-lg">
+                  <LoaderCircle size={14} className="animate-spin text-accent-light" />
+                  Compiling…
+                </span>
+              </div>
+            )}
             <iframe
               title="Resume preview"
               srcDoc={compiled.html}

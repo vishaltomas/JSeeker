@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from "electron";
+import { app, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { COVER_LETTER_SOURCE, SAMPLE_SOURCE } from "../resume_builder/samples";
@@ -172,6 +172,57 @@ ipcMain.handle("builder:create", async (_event, payload: unknown) => {
       "utf-8"
     );
     return { file: fileEntry(filePath) };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+});
+
+/**
+ * Renames a document in place.
+ *
+ * A name already in use is refused rather than worked around: `builder:create`
+ * side-steps a collision because the user asked for "another one", but someone
+ * renaming a file has a specific name in mind and needs to know it's taken.
+ */
+ipcMain.handle("builder:rename", async (_event, payload: unknown) => {
+  const { path: filePath, name } = (payload ?? {}) as { path?: unknown; name?: unknown };
+  const resolved = inWorkspace(filePath);
+  if (!resolved) return { error: "That file isn't in the resume workspace." };
+
+  const stem = safeStem(name);
+  const target = path.join(workspaceDir(), `${stem}${EXTENSION}`);
+  // Nothing to do — and on a case-insensitive filesystem, renaming a file to
+  // itself in different case must not look like a collision.
+  if (path.resolve(target).toLowerCase() === resolved.toLowerCase()) {
+    try {
+      await fs.promises.rename(resolved, target);
+    } catch {
+      /* same name in the same case: nothing to rename */
+    }
+    return { file: fileEntry(target) };
+  }
+  if (fs.existsSync(target)) {
+    return { error: `A document called ${stem}${EXTENSION} already exists.` };
+  }
+  try {
+    await fs.promises.rename(resolved, target);
+    return { file: fileEntry(target) };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+});
+
+/**
+ * Deletes a document — to the OS bin rather than unlinking it, so a mis-click
+ * costs a trip to the recycle bin instead of the afternoon's work. The app
+ * itself offers no undo.
+ */
+ipcMain.handle("builder:delete", async (_event, filePath: unknown) => {
+  const resolved = inWorkspace(filePath);
+  if (!resolved) return { error: "That file isn't in the resume workspace." };
+  try {
+    await shell.trashItem(resolved);
+    return { ok: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

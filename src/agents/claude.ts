@@ -1,28 +1,27 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Store } from "../main/store";
-import type { ChatMessage, FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
+import type { ChatMessage, ChatSink, FieldFill, PageSnapshot, ResumeExtraction } from "./types";
 import { RESUME_ANCHOR_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
 import {
-  buildAutofillPrompt,
+  buildPageAutofillPrompt,
   buildResumeExtractionPrompt,
   buildSystemPrompt,
-  parseFieldMappings,
+  parseFieldFills,
   parseResumeExtraction,
 } from "./prompts";
 
 export const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
 
 /**
- * Ask Claude to map leftover, unrecognized form fields to values from the
- * active profile, using structured outputs so the response is always a
- * schema-valid mapping list — the fallback the browser extension calls (via
- * src/main/extensionServer.ts) for fields its own heuristic matcher
- * couldn't confidently label.
+ * Ask Claude to read a whole page and decide what to type into it, using
+ * structured outputs so the response is always a schema-valid fill list —
+ * the browser extension hands over a snapshot of the page (via
+ * src/main/extensionServer.ts) and the model picks out the fields itself.
  */
-export async function planAutofillWithClaude(
+export async function planPageAutofillWithClaude(
   store: Store,
-  fields: FieldDescriptor[]
-): Promise<FieldMapping[]> {
+  snapshot: PageSnapshot
+): Promise<FieldFill[]> {
   const apiKey = store.settings.anthropicApiKey;
   if (!apiKey) return [];
   const model = store.settings.anthropicModel || DEFAULT_CLAUDE_MODEL;
@@ -30,28 +29,30 @@ export async function planAutofillWithClaude(
 
   const response = await client.messages.create({
     model,
-    max_tokens: 2048,
-    messages: [{ role: "user", content: buildAutofillPrompt(store, fields) }],
+    // Enough headroom for a long form's worth of fills, including a couple
+    // of written-out answers to open questions.
+    max_tokens: 4096,
+    messages: [{ role: "user", content: buildPageAutofillPrompt(store, snapshot) }],
     output_config: {
       format: {
         type: "json_schema",
         schema: {
           type: "object",
           properties: {
-            mappings: {
+            fills: {
               type: "array",
               items: {
                 type: "object",
                 properties: {
-                  index: { type: "integer" },
+                  id: { type: "string" },
                   value: { type: "string" },
                 },
-                required: ["index", "value"],
+                required: ["id", "value"],
                 additionalProperties: false,
               },
             },
           },
-          required: ["mappings"],
+          required: ["fills"],
           additionalProperties: false,
         },
       },
@@ -60,7 +61,7 @@ export async function planAutofillWithClaude(
 
   const block = response.content.find((b) => b.type === "text");
   if (!block || block.type !== "text") return [];
-  return parseFieldMappings(block.text);
+  return parseFieldFills(block.text);
 }
 
 /** Ask Claude to extract a profile — anchor fields, open extraFields, and
@@ -104,13 +105,14 @@ export async function parseResumeWithClaude(
 // is a top-level field rather than a message, and streaming comes from the
 // Anthropic SDK's text-delta events.
 export async function chatWithClaude(
-  event: Electron.IpcMainEvent,
+  sink: ChatSink,
   store: Store,
-  history: ChatMessage[]
+  history: ChatMessage[],
+  pageContext?: string
 ): Promise<void> {
   const apiKey = store.settings.anthropicApiKey;
   if (!apiKey) {
-    event.sender.send("chat:error", "No Claude API key set. Add one in Settings → Assistant.");
+    sink.error("No Claude API key set. Add one in Settings → Assistant.");
     return;
   }
   const model = store.settings.anthropicModel || DEFAULT_CLAUDE_MODEL;
@@ -120,7 +122,7 @@ export async function chatWithClaude(
     const stream = client.messages.stream({
       model,
       max_tokens: 4096,
-      system: buildSystemPrompt(store),
+      system: buildSystemPrompt(store, pageContext),
       messages: history.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.content,
@@ -130,12 +132,12 @@ export async function chatWithClaude(
     let full = "";
     stream.on("text", (delta) => {
       full += delta;
-      event.sender.send("chat:delta", delta);
+      sink.delta(delta);
     });
 
     await stream.finalMessage();
-    event.sender.send("chat:done", full);
+    sink.done(full);
   } catch (err) {
-    event.sender.send("chat:error", err instanceof Error ? err.message : String(err));
+    sink.error(err instanceof Error ? err.message : String(err));
   }
 }

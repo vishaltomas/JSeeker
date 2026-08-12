@@ -1,54 +1,110 @@
 import type { Store } from "../main/store";
-import type { ExtraField, FieldDescriptor, FieldMapping, ResumeExtraction } from "./types";
+import type { ExtraField, FieldFill, PageSnapshot, ResumeExtraction } from "./types";
 import { RESUME_ANCHOR_KEYS } from "./types";
 
-/** System prompt seeded with the profile so the model can help fill applications. */
-export function buildSystemPrompt(store: Store): string {
+/** System prompt seeded with the profile so the model can help fill
+ * applications. `pageContext` is the text of the page the user is looking at,
+ * passed by the extension's in-page chat panel — with it the assistant can
+ * answer about *this* posting ("does my background fit?", "draft an answer to
+ * question 3") instead of being told about it second-hand. */
+export function buildSystemPrompt(store: Store, pageContext?: string): string {
   const lines = Object.entries(store.data)
     .filter(([, value]) => value)
     .map(([key, value]) => `- ${key}: ${value}`);
   const profileText = lines.length ? lines.join("\n") : "(no info saved yet)";
-  return [
+  const prompt = [
     "You are JSeeker's assistant, helping the user complete job applications.",
     "Be concise and practical. Help draft and tailor answers to application questions,",
     "and use the user's saved info below when it is relevant.",
     "",
     "The user's saved info:",
     profileText,
-  ].join("\n");
+  ];
+
+  if (pageContext?.trim()) {
+    prompt.push(
+      "",
+      "The user is currently on this page — usually the posting they're applying to.",
+      "Ground your answers in it, and say so if they ask about something it doesn't cover.",
+      "",
+      "--- page ---",
+      pageContext.trim(),
+      "--- end page ---"
+    );
+  }
+
+  return prompt.join("\n");
 }
 
-/** Builds the shared prompt asking a model to map leftover fields to profile
- * values — used by the browser extension's LLM-fallback matching (see
- * src/main/extensionServer.ts POST /autofill). */
-export function buildAutofillPrompt(store: Store, fields: FieldDescriptor[]): string {
-  const profileLines = Object.entries(store.data)
+/** Everything the model should know about the applicant when filling a form:
+ * the flat profile bag plus the structured resume, flattened to text. Richer
+ * than the chat system prompt's profile block on purpose — application forms
+ * ask for employers, dates and schools, not just contact details. */
+function buildApplicantBlock(store: Store): string {
+  const lines = Object.entries(store.data)
     .filter(([, value]) => value)
     .map(([key, value]) => `- ${key}: ${value}`);
-  if (store.resume.summary) profileLines.push(`- summary: ${store.resume.summary}`);
-  if (store.resume.skills.length) profileLines.push(`- skills: ${store.resume.skills.join(", ")}`);
-  const profileText = profileLines.length ? profileLines.join("\n") : "(no info saved)";
 
+  const { summary, skills, experience, education, languages } = store.resume;
+  if (summary) lines.push(`- summary: ${summary}`);
+  if (skills.length) lines.push(`- skills: ${skills.join(", ")}`);
+  if (languages.length) {
+    lines.push(`- languages: ${languages.map((l) => `${l.name} (${l.proficiency})`).join(", ")}`);
+  }
+  for (const e of experience) {
+    lines.push(`- experience: ${e.title} at ${e.company} (${e.startDate} – ${e.endDate})`);
+    for (const b of e.bullets) lines.push(`    · ${b}`);
+  }
+  for (const e of education) {
+    lines.push(`- education: ${e.degree} ${e.field} at ${e.school} (${e.startDate} – ${e.endDate})`);
+  }
+
+  return lines.length ? lines.join("\n") : "(no info saved)";
+}
+
+/** Builds the shared prompt for whole-page autofill: the applicant's profile
+ * plus a snapshot of the page the extension is looking at, asking the model
+ * to find the fillable controls itself and answer with the `jid` of each one
+ * it can fill (see src/main/extensionServer.ts POST /autofill, and
+ * extension/content.js for how the snapshot is produced and applied). */
+export function buildPageAutofillPrompt(store: Store, snapshot: PageSnapshot): string {
   return [
-    "You are filling out a job application form for the applicant described below.",
-    "Here is a JSON list of form fields a rule-based matcher could not label with confidence.",
+    "You are filling out a job application form on behalf of the applicant described below.",
     "",
     "Applicant profile:",
-    profileText,
+    buildApplicantBlock(store),
     "",
-    "Form fields:",
-    JSON.stringify(fields),
+    `Page: ${snapshot.title || "(untitled)"} — ${snapshot.url || "(unknown url)"}`,
     "",
-    "Only include a field when the profile clearly supports the value.",
-    "For a field with an `options` list, the value must be one of those option strings verbatim.",
-    "Never invent information (employer names, dates, numbers, etc.) that isn't in the profile.",
-    "Omit any field you're unsure about.",
+    "The page's visible content follows. Every field the user can fill appears on its own line",
+    'as a tag carrying jid="…" — that id is how you refer to the field, so copy it exactly.',
+    "Lines without a tag are the page's own text: headings, questions and instructions that tell",
+    "you what the fields near them are asking for.",
+    "",
+    "--- page ---",
+    snapshot.page,
+    "--- end page ---",
+    "",
+    "Return one entry per field you can fill, each with the field's exact jid and a value:",
+    '- text inputs and <textarea>: `value` is the text to type. For open questions ("why do you',
+    '  want this role?", "describe your experience with X"), write a short, specific answer',
+    "  grounded in the profile above — a few sentences, first person, no placeholders.",
+    "- <select>: `value` must be one of that field's listed options, copied verbatim.",
+    '- radio buttons and checkboxes: `value` is "true" for the option that should be selected.',
+    "  Radios sharing a `name` are one question — select at most one of them.",
+    "",
+    'Skip any field that already shows current="…" — the user filled that one already.',
+    "Skip fields the profile can't answer, and anything asking for a password, a payment detail,",
+    "or a file upload. Never invent employers, dates, degrees, salary figures, or work",
+    "authorization / visa / demographic answers that the profile doesn't state — leaving a",
+    "field for the user to complete is always better than guessing at one.",
   ].join("\n");
 }
 
-/** Parse a model's JSON-mode response into field mappings, tolerating either a
- * bare array or an object wrapping one. */
-export function parseFieldMappings(content: string): FieldMapping[] {
+/** Parse a model's JSON-mode response into field fills, tolerating either a
+ * bare array or an object wrapping one, and coercing the id to a string (a
+ * model that sees jid="12" will sometimes answer with the number 12). */
+export function parseFieldFills(content: string): FieldFill[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -59,14 +115,19 @@ export function parseFieldMappings(content: string): FieldMapping[] {
     ? parsed
     : Object.values(parsed as Record<string, unknown>).find(Array.isArray) ?? [];
   if (!Array.isArray(list)) return [];
-  return list.filter(
-    (x): x is FieldMapping =>
-      !!x &&
-      typeof x === "object" &&
-      typeof (x as FieldMapping).index === "number" &&
-      typeof (x as FieldMapping).value === "string" &&
-      (x as FieldMapping).value.trim() !== ""
-  );
+
+  const fills: FieldFill[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const { id, value } = item as { id?: unknown; value?: unknown };
+    const key = typeof id === "string" ? id.trim() : typeof id === "number" ? String(id) : "";
+    if (!key || seen.has(key)) continue;
+    if (typeof value !== "string" || value.trim() === "") continue;
+    seen.add(key);
+    fills.push({ id: key, value });
+  }
+  return fills;
 }
 
 /** Builds the onboarding prompt asking a model to extract a profile from one
