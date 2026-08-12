@@ -2,6 +2,8 @@ import { app, BrowserWindow, Menu } from "electron";
 import * as path from "path";
 import "./store";
 import "./files";
+import "./builderWorkspace";
+import "./pdf";
 import { bootstrapOllama } from "../agents";
 import { setMainWindow } from "./window";
 import { startExtensionServer } from "./extensionServer";

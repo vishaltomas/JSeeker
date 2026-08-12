@@ -19,7 +19,11 @@ function emptyStore(): Store {
       extensionSyncToken: "",
     },
     onboarded: false,
-    builderSource: "",
+    builderFilePath: "",
+    builderAutosave: true,
+    builderAutoCompile: false,
+    builderFont: "georgia",
+    builderAccent: "ink",
   };
 }
 
@@ -36,9 +40,12 @@ export function useAppStore() {
     });
   }, []);
 
-  const persist = useCallback((next: Store) => {
+  // Resolves once the write lands, so a caller that shows save state (the
+  // builder's autosave indicator) can wait for it. Callers that don't care
+  // can keep ignoring the result.
+  const persist = useCallback((next: Store): Promise<boolean> => {
     setStore(next);
-    window.api.saveStore(next);
+    return window.api.saveStore(next);
   }, []);
 
   return { store, persist, loaded };

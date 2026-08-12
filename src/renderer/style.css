@@ -37,6 +37,226 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Markdown rendered in chat bubbles (see components/Markdown.tsx).
+
+   Tailwind's preflight strips heading/list/margin defaults, so markdown-it's
+   output needs them put back. Scoped to `.md` rather than set globally so it
+   only affects rendered model output. Sizes are relative (em) because the
+   bubble sets the base font size, and text color is inherited from it.
+
+   Surfaces here are light overlays rather than the theme's fixed hexes, so a
+   code block or table border keeps the same contrast against the bubble it
+   happens to sit on.
+   ------------------------------------------------------------------------ */
+.md > *:first-child {
+  margin-top: 0;
+}
+
+.md > *:last-child {
+  margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol,
+.md pre,
+.md blockquote,
+.md table {
+  margin: 0.5em 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.md h1 {
+  font-size: 1.3em;
+}
+.md h2 {
+  font-size: 1.18em;
+}
+.md h3 {
+  font-size: 1.07em;
+}
+.md h4 {
+  font-size: 1em;
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.35em;
+}
+
+.md ul {
+  list-style: disc;
+}
+
+.md ol {
+  list-style: decimal;
+}
+
+.md li {
+  margin: 0.15em 0;
+}
+
+.md li > ul,
+.md li > ol {
+  margin: 0.15em 0;
+}
+
+.md a {
+  color: var(--color-accent-light);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.md a:hover {
+  color: #93c5fd;
+}
+
+.md strong {
+  font-weight: 700;
+}
+
+.md em {
+  font-style: italic;
+}
+
+.md code {
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.08);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+/* The wrapping `white-space: pre-wrap` on the bubble would double up with the
+   block's own newlines, so fenced blocks manage their own wrapping. */
+.md pre {
+  overflow-x: auto;
+  padding: 0.6em 0.75em;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.28);
+  white-space: pre;
+}
+
+.md pre code {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.md blockquote {
+  padding-left: 0.7em;
+  border-left: 3px solid rgb(255 255 255 / 0.18);
+  opacity: 0.9;
+}
+
+.md hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid rgb(255 255 255 / 0.12);
+}
+
+.md table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.md th,
+.md td {
+  padding: 0.25em 0.55em;
+  border: 1px solid rgb(255 255 255 / 0.14);
+}
+
+.md th {
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   The builder's Docs tab (components/builderDocs.ts).
+
+   A reference is read by scanning, not by reading top to bottom, so colour is
+   doing navigational work here: section headings in the accent, argument names
+   and code in a warmer tone than prose, and a tinted header row so a table's
+   two columns separate at a glance. Scoped to `.builder-docs` on top of `.md`,
+   which chat also uses and should keep its quieter treatment.
+   ------------------------------------------------------------------------ */
+.builder-docs h1 {
+  margin-top: 0;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--color-line);
+  color: #ffffff;
+}
+
+.builder-docs h2 {
+  margin-top: 1.5em;
+  color: var(--color-accent-light);
+}
+
+.builder-docs h3 {
+  color: var(--color-ink-soft);
+}
+
+.builder-docs p,
+.builder-docs li {
+  color: var(--color-ink-soft);
+}
+
+/* Argument names and literals — the things being looked up. */
+.builder-docs code {
+  background: rgb(96 165 250 / 0.12);
+  color: #bfdbfe;
+}
+
+.builder-docs pre {
+  border-color: rgb(96 165 250 / 0.18);
+  border-left: 3px solid var(--color-accent);
+  background: rgb(0 0 0 / 0.35);
+}
+
+.builder-docs pre code {
+  color: var(--color-ink);
+  background: none;
+}
+
+.builder-docs table {
+  width: 100%;
+}
+
+.builder-docs th {
+  background: rgb(255 255 255 / 0.05);
+  color: var(--color-ink-muted);
+  font-size: 0.92em;
+  font-weight: 600;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* The left column is the name you came looking for; keep it from wrapping
+   mid-argument and let the description column take the slack. */
+.builder-docs td:first-child {
+  white-space: nowrap;
+}
+
+.builder-docs tbody tr:nth-child(even) {
+  background: rgb(255 255 255 / 0.02);
+}
+
+.builder-docs strong {
+  color: #ffffff;
+}
+
+/* ---------------------------------------------------------------------------
    Onboarding welcome intro.
 
    The pieces (trailing dots, greeting bubble, upload orb) animate in one at a

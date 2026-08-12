@@ -2,6 +2,15 @@ import { createElement, Fragment, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Parser } from "./parser";
 import { ASTToReactNode, type BuildResult } from "./uiRenderer";
+import { fontStack } from "./fonts";
+import { accentHex } from "./colors";
+
+export interface CompileOptions {
+    /** Which of `FONTS` to set the document in. */
+    font?: string;
+    /** Which of `ACCENTS` the document's `color : 'accent'` resolves to. */
+    accent?: string;
+}
 
 export interface CompileResult {
     /** A complete standalone document, ready to hand an iframe's `srcDoc`. */
@@ -31,23 +40,68 @@ function collect(result: BuildResult, out: ReactNode[]): void {
     out.push(result as ReactNode);
 }
 
+/** Width of the page the document lays out on, in CSS pixels — A4 at 96dpi.
+ *  The preview renders at exactly this width and is scaled to fit its pane,
+ *  so what's on screen is the same layout the PDF gets. */
+export const PAGE_WIDTH_PX = 794;
+
 /** Wraps rendered markup in a self-contained document. The iframe has no
  *  access to the app's stylesheet, so the page carries its own base rules and
- *  every component-level rule travels inline on the elements themselves. */
-function page(body: string): string {
+ *  every component-level rule travels inline on the elements themselves.
+ *
+ *  On screen the body is a sheet of paper floating on a grey backdrop. Under
+ *  print — which is what `webContents.printToPDF` emulates, see main/pdf.ts —
+ *  the backdrop, shadow and page margin drop away and the paper becomes the
+ *  sheet the printer is already holding, so the exported PDF is the same
+ *  document without the viewer chrome baked into it. */
+function page(body: string, font: string, accent: string): string {
     return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
+  @page { size: A4; }
+  /* The accent lives here once; everything that asked for it refers back. */
+  :root { --accent: ${accent}; }
   *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  html {
+    margin: 0;
+    padding: 0;
+    background: #525659;
+    /* The page floats on this backdrop and scrolls against it, so the
+       scrollbar belongs to the viewer rather than to the document. */
+    scrollbar-width: thin;
+    scrollbar-color: #8a8d91 #525659;
+  }
   body {
+    width: 210mm;
+    min-height: 297mm;
+    /* auto centres the sheet whenever the canvas is wider than it is, and
+       gives way to a scroll once a zoom makes the sheet the wider of the two. */
+    margin: 24px auto;
     background: #ffffff;
     color: #111111;
-    font-family: Georgia, "Times New Roman", serif;
-    line-height: 1.4;
+    font-family: ${font};
+    /* Resume typography: ~10pt body set tight, so a page holds a page's
+       worth. Components override the size per element; this is the floor
+       anything unstyled lands on. */
+    font-size: 13px;
+    line-height: 1.35;
     padding: 48px;
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+  }
+  @media print {
+    html { background: #ffffff; }
+    body {
+      width: auto;
+      min-height: 0;
+      margin: 0;
+      /* The printer supplies the margin instead — matched to this padding in
+         main/pdf.ts — so page two onward is inset like page one, which a
+         padded box alone would not do. */
+      padding: 0;
+      box-shadow: none;
+    }
   }
 </style>
 </head>
@@ -62,8 +116,10 @@ function page(body: string): string {
  * user is mid-keystroke, so failures come back as `error` alongside a blank
  * page.
  */
-export function compileToHtml(source: string): CompileResult {
-    if (!source.trim()) return { html: page("") };
+export function compileToHtml(source: string, options: CompileOptions = {}): CompileResult {
+    const font = fontStack(options.font);
+    const accent = accentHex(options.accent);
+    if (!source.trim()) return { html: page("", font, accent) };
     try {
         const ast = new Parser().parse(source);
         const nodes: ReactNode[] = [];
@@ -75,8 +131,8 @@ export function compileToHtml(source: string): CompileResult {
                 ...nodes.map((node, i) => createElement(Fragment, { key: i }, node))
             )
         );
-        return { html: page(body) };
+        return { html: page(body, font, accent) };
     } catch (e) {
-        return { html: page(""), error: e instanceof Error ? e.message : String(e) };
+        return { html: page("", font, accent), error: e instanceof Error ? e.message : String(e) };
     }
 }

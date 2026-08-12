@@ -41,6 +41,19 @@ interface ResumeParseResult {
   error?: string;
 }
 
+interface BuilderFile {
+  name: string;
+  path: string;
+  modified: number;
+}
+
+interface PdfExportResult {
+  ok: boolean;
+  canceled?: boolean;
+  filePath?: string;
+  error?: string;
+}
+
 type OllamaStatus =
   | { state: "starting" }
   | { state: "pulling"; model: string; percent: number; detail: string }
@@ -60,7 +73,29 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("dialog:pickResumeFiles"),
   parseResume: (filePaths: string[]): Promise<ResumeParseResult> =>
     ipcRenderer.invoke("resume:parse", { filePaths }),
+  /** The builder's workspace of `.resb` documents — see main/builderWorkspace.ts. */
+  builder: {
+    list: (): Promise<{ dir: string; files: BuilderFile[] }> =>
+      ipcRenderer.invoke("builder:list"),
+    read: (filePath: string): Promise<{ content?: string; error?: string }> =>
+      ipcRenderer.invoke("builder:read", filePath),
+    write: (filePath: string, content: string): Promise<{ ok?: boolean; error?: string }> =>
+      ipcRenderer.invoke("builder:write", { path: filePath, content }),
+    create: (name?: string, content?: string): Promise<{ file?: BuilderFile; error?: string }> =>
+      ipcRenderer.invoke("builder:create", { name, content }),
+    /** Reads a `.resb` file from anywhere on disk, without importing it. */
+    pick: (): Promise<{ canceled?: boolean; name?: string; content?: string; error?: string }> =>
+      ipcRenderer.invoke("builder:pick"),
+  },
+  /** Renders a compiled resume document to PDF, prompting for a save
+   * location. `name` seeds the suggested file name. */
+  exportPdf: (html: string, name?: string): Promise<PdfExportResult> =>
+    ipcRenderer.invoke("pdf:export", { html, name }),
   extensionInfo: (): Promise<{ port: number }> => ipcRenderer.invoke("extension:info"),
+  /** Opens an http(s) URL in the user's browser. Resolves false if the main
+   * process rejected the scheme. */
+  openExternal: (url: string): Promise<boolean> =>
+    ipcRenderer.invoke("shell:openExternal", url),
   onOllamaStatus: (cb: (status: OllamaStatus) => void): void => {
     ipcRenderer.on("ollama:status", (_event, status: OllamaStatus) => cb(status));
   },

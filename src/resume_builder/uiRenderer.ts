@@ -34,21 +34,49 @@ const KEYWORD_ARGS_MAPPING: {
         'ps': 'paddingSize',
         'txt': 'text',
         'cls': 'className',
+        'ta': 'textAlign',
+        'mt': 'marginTop',
+        'mb': 'marginBottom',
         // canonical spellings
         'fontWeight': 'fontWeight',
         'fontSize': 'fontSize',
         'fontStyle': 'fontStyle',
         'align': 'align',
+        'textAlign': 'textAlign',
         'padding': 'padding',
         'paddingSize': 'paddingSize',
         'text': 'text',
-        'className': 'className'
+        'className': 'className',
+        'marginTop': 'marginTop',
+        'marginBottom': 'marginBottom',
+        'rule': 'rule',
+        'bullet': 'bullet',
+        'grow': 'grow',
+        'nowrap': 'nowrap',
+        'font': 'font',
+        'c': 'color',
+        'bg': 'background',
+        'color': 'color',
+        'background': 'background'
     },
     'Block':{
-        // `Block` takes its children positionally; `name` is its only named arg.
-        // `children` and `numChildren` are derived from the parsed args, so they
-        // are deliberately not settable from source.
-        'name': 'name'
+        // `Block` takes its cells positionally; the rest are named args.
+        // `children` and `numChildren` are derived from the parsed args, so
+        // they are deliberately not settable from source.
+        'name': 'name',
+        'dir': 'direction',
+        'gap': 'gap',
+        'mt': 'marginTop',
+        'mb': 'marginBottom',
+        'direction': 'direction',
+        'spread': 'spread',
+        'marginTop': 'marginTop',
+        'marginBottom': 'marginBottom',
+        'font': 'font',
+        'c': 'color',
+        'bg': 'background',
+        'color': 'color',
+        'background': 'background'
     }
 }
 
@@ -177,15 +205,27 @@ export class ASTToReactNode{
                     break;
                 }
                 case 'Block':{
-                    uiNode = (...text: string[]) => components.Block({
-                        ...params,
-                        // derived from the parsed args, so not settable from source.
-                        // Cell is invoked as a plain function, so its result carries
-                        // no key — wrap each child to keep React quiet about the list.
-                        children: cells.map((cell, index) =>
-                            createElement(Fragment, { key: index }, cell(text[index]))),
-                        numChildren: cells.length
-                    });
+                    uiNode = (...text: string[]) => {
+                        // A block draws one cell per value it's given. Run out
+                        // of cells and the last one repeats, so a column of
+                        // bullets is defined once and grows by adding another
+                        // value in `main:` — no need to declare six cells to
+                        // write six bullet points.
+                        const count = Math.max(cells.length, text.length);
+                        return components.Block({
+                            ...params,
+                            // derived from the parsed args, so not settable from source.
+                            // Cell is invoked as a plain function, so its result carries
+                            // no key — wrap each child to keep React quiet about the list.
+                            children: Array.from({ length: count }, (_unused, index) =>
+                                createElement(
+                                    Fragment,
+                                    { key: index },
+                                    cells[Math.min(index, cells.length - 1)](text[index])
+                                )),
+                            numChildren: count
+                        });
+                    };
                     break;
                 }
                default: throw new SyntaxError(`${this.constructor.name}: ${this.NodeBuilder.name}: Unidentified symbol`);

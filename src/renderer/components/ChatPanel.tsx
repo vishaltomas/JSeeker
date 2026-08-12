@@ -3,6 +3,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { Globe, Mic, Plus, Trash2, X } from "lucide-react";
 import { useChat } from "../hooks/useChat";
 import type { ChatBubble } from "../hooks/useChat";
+import { Markdown } from "./Markdown";
 import { cx } from "../ui";
 
 interface ChatPanelProps {
@@ -15,23 +16,33 @@ function rowClass(kind: ChatBubble["kind"]): string {
   return "group flex max-w-[85%] items-end gap-1 self-start";
 }
 
+/**
+ * Both roles sit on muted surfaces a step or two above the panel
+ * (`bg-surface-1`) rather than on saturated gradients — long markdown answers
+ * are much easier to read on a near-neutral ground. The two are told apart by
+ * one step of lightness plus their side of the column, not by hue.
+ */
 function bubbleClass(kind: ChatBubble["kind"]): string {
-  const base = "min-w-0 whitespace-pre-wrap break-words px-4 py-2.5 text-[13px] leading-[1.45] shadow-sm";
-  if (kind === "user") return cx(base, "rounded-[22px] bg-gradient-to-r from-fuchsia-600 to-purple-700 text-white");
+  const base =
+    "min-w-0 break-words rounded-[22px] border px-4 py-2.5 text-[13px] leading-[1.45] text-ink shadow-sm";
+  if (kind === "user")
+    return cx(base, "whitespace-pre-wrap border-line bg-surface-3");
   if (kind === "error")
     return cx(
       "min-w-0 whitespace-pre-wrap break-words rounded-xl px-[11px] py-2 text-[13px] leading-[1.45]",
       "border border-danger-border bg-danger-bg text-danger-text"
     );
-  return cx(base, "rounded-[22px] bg-gradient-to-r from-indigo-600 to-purple-600 text-white");
+  // assistant — rendered as markdown, which brings its own block layout, so no
+  // whitespace-pre-wrap here (it would double up with paragraphs and lists)
+  return cx(base, "border-line-subtle bg-surface-2");
 }
 
 function TypingDots() {
   return (
-    <div className="flex items-center gap-1 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 px-3.5 py-2.5 shadow-sm">
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-white/80 [animation-delay:-0.3s]" />
-      <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-white [animation-delay:-0.15s]" />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-white/80" />
+    <div className="flex items-center gap-1 rounded-full border border-line-subtle bg-surface-2 px-3.5 py-2.5 shadow-sm">
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:-0.3s]" />
+      <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-ink-muted [animation-delay:-0.15s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint" />
     </div>
   );
 }
@@ -91,7 +102,13 @@ export function ChatPanel({ open }: ChatPanelProps) {
           const showDots = showTypingDots && isLast;
           return (
             <div key={b.id} className={rowClass(b.kind)}>
-              {showDots ? <TypingDots /> : <div className={bubbleClass(b.kind)}>{b.text}</div>}
+              {showDots ? (
+                <TypingDots />
+              ) : (
+                <div className={bubbleClass(b.kind)}>
+                  {b.kind === "assistant" ? <Markdown text={b.text} /> : b.text}
+                </div>
+              )}
               <button
                 type="button"
                 className="flex flex-shrink-0 cursor-pointer items-center justify-center rounded-md p-1 text-ink-faint opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-surface-3 hover:text-danger-text"
