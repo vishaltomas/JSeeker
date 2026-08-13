@@ -1,8 +1,12 @@
-// The floating chat panel, injected into the page on demand (Alt+J, or the
-// right-click menu). Talks to background.js over a long-lived port, which
-// does the actual streaming call to the JSeeker app — a content script can't
-// reach 127.0.0.1 itself, since cross-origin requests from the page's origin
-// go through the service worker in MV3.
+// The floating chat panel — the whole of this extension. Injected into the
+// page on demand (the toolbar icon, Alt+J, or the right-click menu). Talks to
+// background.js over a long-lived port, which does the actual streaming call
+// to the JSeeker app — a content script can't reach 127.0.0.1 itself, since
+// cross-origin requests from the page's origin go through the service worker
+// in MV3.
+//
+// It only ever reads the page, and only the visible text at that: nothing
+// here writes to the page's fields or acts on it in any way.
 //
 // Everything lives inside a shadow root so the host page's CSS can't reach
 // in and ours can't leak out.
@@ -14,13 +18,6 @@
     window.__jseekerWidget.toggle();
     return;
   }
-
-  // background.js marks the document before injecting when it just wants the
-  // bubble present (after a fill) rather than the panel open in the user's
-  // face. Reading it here rather than opening and closing again avoids a
-  // frame of the panel flashing on screen.
-  const autostart = document.documentElement.dataset.jseekerAutostart;
-  delete document.documentElement.dataset.jseekerAutostart;
 
   const MAX_PAGE_CONTEXT = 6000;
 
@@ -67,6 +64,27 @@
       .bot { align-self: flex-start; background: #292a2f; }
       .err { align-self: stretch; background: #3b1d1d; color: #fca5a5; }
       .hint { color: #6b7280; font-size: 12px; }
+      .doc {
+        align-self: flex-start; max-width: 100%; width: 100%;
+        background: #23242a; border: 1px solid #34353b; border-radius: 10px; padding: 8px 10px;
+      }
+      .doc .kind { font-weight: 600; margin-bottom: 4px; }
+      .doc pre {
+        margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-wrap: break-word;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #d4d4d8;
+      }
+      .doc .save {
+        margin-top: 8px; border: 0; border-radius: 6px; padding: 5px 10px; cursor: pointer;
+        background: #2563eb; color: #fff; font: 600 12px system-ui;
+      }
+      .doc .save[disabled] { opacity: .5; cursor: default; }
+      .actions { display: flex; gap: 6px; padding: 8px 12px 0; }
+      .actions button {
+        flex: 1; border: 1px solid #3a3b42; background: #23242a; color: #e6e6e9;
+        border-radius: 8px; padding: 6px 8px; cursor: pointer; font: 500 12px system-ui;
+      }
+      .actions button:hover:not([disabled]) { background: #2c2d34; border-color: #4b4c55; }
+      .actions button[disabled] { opacity: .5; cursor: default; }
       .ctx { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-top: 1px solid #2a2b30; color: #9ca3af; font-size: 11.5px; }
       form { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid #2a2b30; }
       textarea {
@@ -87,11 +105,14 @@
       <header>
         JSeeker
         <span class="spacer"></span>
-        <button class="fill" title="Fill this form using your profile">Fill form</button>
         <button class="close" title="Close">✕</button>
       </header>
       <div class="log">
         <div class="hint">Ask about this posting, draft an answer, or tailor your experience to it.</div>
+      </div>
+      <div class="actions">
+        <button class="draft" data-kind="cover-letter">Cover letter</button>
+        <button class="draft" data-kind="resume">Tailor resume</button>
       </div>
       <label class="ctx"><input type="checkbox" class="usePage" checked> Let the assistant read this page</label>
       <form>
@@ -107,11 +128,21 @@
   const input = root.querySelector("textarea");
   const sendBtn = form.querySelector("button");
   const usePage = root.querySelector(".usePage");
+  const draftButtons = Array.from(root.querySelectorAll(".draft"));
 
   /** Conversation as the app's chat API wants it — the page context rides
    * alongside rather than inside it, so it never fills up the history. */
   const history = [];
   let streaming = false;
+  /** Set while a document is being drafted, so the streamed text lands in a
+   * document card rather than in the conversation. */
+  let drafting = null;
+
+  /** Identifies the posting to the app, which files everything said here
+   * under one session per page — see main/sessions.ts. */
+  function pageIdentity() {
+    return { url: window.location.href, title: document.title };
+  }
 
   function addMessage(role, text) {
     const el = document.createElement("div");
@@ -122,10 +153,63 @@
     return el;
   }
 
+  const DOC_LABEL = { "cover-letter": "Cover letter", resume: "Tailored resume" };
+
+  /** Turns a page title into something that reads well as a file name:
+   * "Mobile Engineer — Bjak" -> "cover-letter-mobile-engineer-bjak.md". */
+  function fileNameFor(kind) {
+    const slug = (document.title || window.location.hostname || "posting")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60);
+    return `${kind}${slug ? "-" + slug : ""}.md`;
+  }
+
+  /** Saves the drafted text through the page's own download machinery — a
+   * Blob URL and a synthetic click. The extension has no downloads permission
+   * and doesn't need one; this is the same thing any page can do. */
+  function download(kind, text) {
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = fileNameFor(kind);
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Revoked on a delay: Chrome needs the URL to survive the click.
+    setTimeout(() => URL.revokeObjectURL(href), 10000);
+  }
+
+  /** The card a drafted document streams into, with its own Save button. */
+  function addDocument(kind) {
+    const card = document.createElement("div");
+    card.className = "doc";
+
+    const heading = document.createElement("div");
+    heading.className = "kind";
+    heading.textContent = DOC_LABEL[kind] || "Document";
+
+    const body = document.createElement("pre");
+
+    const save = document.createElement("button");
+    save.className = "save";
+    save.textContent = "Download";
+    save.disabled = true; // nothing to save until the draft finishes
+    save.addEventListener("click", () => download(kind, body.textContent));
+
+    card.append(heading, body, save);
+    log.appendChild(card);
+    log.scrollTop = log.scrollHeight;
+    return { body, save };
+  }
+
   function pageContext() {
     if (!usePage.checked) return "";
-    // innerText rather than the autofill snapshot: for a conversation the
-    // readable posting is what matters, not the form controls.
+    // innerText, not markup: for a conversation the readable posting is what
+    // matters, and the page's structure is noise the model has to pay for.
     return (document.body.innerText || "").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_PAGE_CONTEXT);
   }
 
@@ -134,16 +218,28 @@
 
   port.onMessage.addListener((msg) => {
     if (msg.type === "delta") {
+      if (drafting) {
+        drafting.body.textContent += msg.text;
+        log.scrollTop = log.scrollHeight;
+        return;
+      }
       if (!pending) pending = addMessage("assistant", "");
       pending.textContent += msg.text;
       log.scrollTop = log.scrollHeight;
       return;
     }
     if (msg.type === "done") {
-      if (pending) history.push({ role: "assistant", content: pending.textContent });
+      if (drafting) {
+        // A document isn't part of the conversation — it's an artifact, kept
+        // out of the history so it doesn't crowd out later turns.
+        drafting.save.disabled = !drafting.body.textContent.trim();
+      } else if (pending) {
+        history.push({ role: "assistant", content: pending.textContent });
+      }
       finish();
       return;
     }
+    if (msg.type === "artifact") return; // the app filed it; nothing to show
     if (msg.type === "error") {
       // A half-streamed reply is still worth keeping on screen; the error
       // goes underneath it rather than replacing it.
@@ -164,8 +260,16 @@
   function finish() {
     streaming = false;
     pending = null;
+    drafting = null;
     sendBtn.disabled = false;
+    for (const button of draftButtons) button.disabled = false;
     input.focus();
+  }
+
+  function startStreaming() {
+    streaming = true;
+    sendBtn.disabled = true;
+    for (const button of draftButtons) button.disabled = true;
   }
 
   function send() {
@@ -175,10 +279,28 @@
     addMessage("user", text);
     history.push({ role: "user", content: text });
     input.value = "";
-    streaming = true;
-    sendBtn.disabled = true;
+    startStreaming();
 
-    port.postMessage({ type: "chat", messages: history, page: pageContext() });
+    port.postMessage({ type: "chat", messages: history, page: pageContext(), ...pageIdentity() });
+  }
+
+  /** Drafts a cover letter or a tailored resume from this posting. Needs the
+   * page, so it says so plainly rather than quietly producing something
+   * generic from the profile alone. */
+  function draft(kind) {
+    if (streaming) return;
+    const page = pageContext();
+    if (!page) {
+      addMessage("error", "Turn on \u201cLet the assistant read this page\u201d first \u2014 a draft needs the posting.");
+      return;
+    }
+    startStreaming();
+    drafting = addDocument(kind);
+    port.postMessage({ type: "document", kind, page, ...pageIdentity() });
+  }
+
+  for (const button of draftButtons) {
+    button.addEventListener("click", () => draft(button.dataset.kind));
   }
 
   form.addEventListener("submit", (e) => {
@@ -192,10 +314,6 @@
       send();
     }
     e.stopPropagation(); // job sites bind their own keyboard shortcuts
-  });
-
-  root.querySelector(".fill").addEventListener("click", () => {
-    port.postMessage({ type: "fill" });
   });
 
   function open() {
@@ -216,5 +334,7 @@
     toggle: () => (host.classList.contains("open") ? collapse() : open()),
   };
 
-  if (autostart !== "collapsed") open();
+  // Injection is always a deliberate act by the user, so the panel opens
+  // rather than leaving them a bubble to click a second time.
+  open();
 })();

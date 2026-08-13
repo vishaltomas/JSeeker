@@ -3,24 +3,17 @@ import { randomUUID } from "crypto";
 import * as path from "path";
 import type { Store, StructuredResume } from "../main/store";
 import { emptyStructuredResume, loadStore } from "../main/store";
-import type { ChatMessage, ChatSink, FieldFill, PageSnapshot, ResumeFields } from "./types";
-import { chatWithOllama, parseResumeWithOllama, planPageAutofillWithOllama } from "./ollama";
-import { chatWithClaude, parseResumeWithClaude, planPageAutofillWithClaude } from "./claude";
+import type { ChatMessage, ChatSink, ExtraField, ProgressSink, ResumeFields } from "./types";
+import { chatWithOllama, extractAnswersWithOllama, parseResumeWithOllama } from "./ollama";
+import { chatWithClaude, extractAnswersWithClaude, parseResumeWithClaude } from "./claude";
 import { extractPdfText } from "./resumeExtract";
+import { buildDocumentPrompt } from "./prompts";
+import { getSession, setAnswers } from "../main/sessions";
+import { DEFAULT_EMBED_MODEL } from "./embeddings";
+import { reconcileProfile, type MergeResult } from "./reconcile";
+import { DEFAULT_HOST } from "./ollama";
 
 export { bootstrapOllama } from "./ollama";
-
-/** Dispatches whole-page autofill to whichever model provider is configured
- * — called from the browser extension's local HTTP route (see
- * src/main/extensionServer.ts POST /autofill). */
-export async function planPageAutofill(
-  store: Store,
-  snapshot: PageSnapshot
-): Promise<FieldFill[]> {
-  return store.settings.provider === "claude"
-    ? planPageAutofillWithClaude(store, snapshot)
-    : planPageAutofillWithOllama(store, snapshot);
-}
 
 // Onboarding step: read one or more uploaded documents and (for PDFs)
 // extract a profile — open key-value fields plus the structured resume
@@ -30,7 +23,7 @@ export async function planPageAutofill(
 ipcMain.handle(
   "resume:parse",
   async (
-    _event,
+    event,
     args: { filePaths: string[] }
   ): Promise<{
     fields: ResumeFields;
@@ -46,18 +39,24 @@ ipcMain.handle(
       return { fields: {}, resume: emptyResume, unsupportedFiles };
     }
 
+    // Both steps are slow enough to need narration — the PDF read is per
+    // file, and the extraction is one long model pass over all of them.
+    const report: ProgressSink = (progress) =>
+      event.sender.send("resume:progress", progress);
+
     try {
-      const documents = await Promise.all(
-        pdfPaths.map(async (filePath) => ({
-          filename: path.basename(filePath),
-          text: await extractPdfText(filePath),
-        }))
-      );
+      // Sequential rather than parallel so "reading X (2 of 3)" reflects
+      // real progress instead of three files all claiming to be in flight.
+      const documents: { filename: string; text: string }[] = [];
+      for (const [index, filePath] of pdfPaths.entries()) {
+        report({ stage: "reading", file: path.basename(filePath), index: index + 1, total: pdfPaths.length });
+        documents.push({ filename: path.basename(filePath), text: await extractPdfText(filePath) });
+      }
       const store = loadStore();
       const extraction =
         store.settings.provider === "claude"
-          ? await parseResumeWithClaude(store, documents)
-          : await parseResumeWithOllama(store, documents);
+          ? await parseResumeWithClaude(store, documents, report)
+          : await parseResumeWithOllama(store, documents, report);
 
       const resume: StructuredResume = {
         summary: extraction.summary,
@@ -72,6 +71,48 @@ ipcMain.handle(
         fields: {},
         resume: emptyResume,
         unsupportedFiles,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+);
+
+// Folds an extraction into the profile the user already has. Kept in the main
+// process because the comparison that decides "is this entry already in the
+// profile?" runs against the local embedding model (see agents/reconcile.ts).
+// Nothing is written to disk here — the renderer shows the result for review
+// and the user still has to save.
+ipcMain.handle(
+  "resume:merge",
+  async (
+    event,
+    args: {
+      current: { fields: ResumeFields; resume: StructuredResume };
+      incoming: { fields: ResumeFields; resume: StructuredResume };
+    }
+  ): Promise<MergeResult & { error?: string }> => {
+    const store = loadStore();
+    const host = store.settings.ollamaHost || DEFAULT_HOST;
+    try {
+      return await reconcileProfile(host, DEFAULT_EMBED_MODEL, args.current, args.incoming, (progress) =>
+        event.sender.send("resume:progress", progress)
+      );
+    } catch (err) {
+      // Leave the profile exactly as it was rather than guessing at a merge.
+      return {
+        fields: args.current.fields,
+        resume: args.current.resume,
+        report: {
+          mode: "lexical",
+          fieldsAdded: [],
+          fieldConflicts: [],
+          summary: "kept",
+          experience: { added: 0, matched: 0, enriched: 0 },
+          bulletsAdded: 0,
+          education: { added: 0, matched: 0, enriched: 0 },
+          skills: { added: 0, matched: 0, enriched: 0 },
+          languages: { added: 0, matched: 0, enriched: 0 },
+        },
         error: err instanceof Error ? err.message : String(err),
       };
     }
@@ -93,6 +134,47 @@ export async function streamChat(
     await chatWithOllama(sink, store, history, pageContext);
   }
 }
+
+/** Streams a drafted document — the panel's "Cover letter" / "Tailor resume"
+ * buttons. The posting rides in as page context exactly as it does for chat,
+ * so the difference from a chat turn is only the instruction. */
+export async function streamDocument(
+  store: Store,
+  kind: "cover-letter" | "resume",
+  posting: string,
+  sink: ChatSink
+): Promise<void> {
+  const ask: ChatMessage[] = [{ role: "user", content: buildDocumentPrompt(store, kind) }];
+  if (store.settings.provider === "claude") {
+    await chatWithClaude(sink, store, ask, posting);
+  } else {
+    await chatWithOllama(sink, store, ask, posting);
+  }
+}
+
+/** Pulls reusable answers out of one session's conversation (see
+ * main/sessions.ts) — the History view asks for this on demand, and the user
+ * reviews the result before any of it reaches their profile. */
+ipcMain.handle(
+  "sessions:extractAnswers",
+  async (_event, id: string): Promise<{ answers: ExtraField[]; error?: string }> => {
+    const session = getSession(id);
+    if (!session) return { answers: [], error: "That session no longer exists." };
+    if (!session.messages.length) return { answers: [] };
+
+    try {
+      const store = loadStore();
+      const answers =
+        store.settings.provider === "claude"
+          ? await extractAnswersWithClaude(store, session.messages)
+          : await extractAnswersWithOllama(store, session.messages);
+      setAnswers(id, answers);
+      return { answers };
+    } catch (err) {
+      return { answers: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+);
 
 ipcMain.on("chat:send", async (event, history: ChatMessage[]) => {
   await streamChat(loadStore(), history, {

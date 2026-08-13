@@ -1,7 +1,8 @@
-import { useState } from "react";
-import type { ProfileData, Store, StructuredResume } from "../../types";
+import { useEffect, useState } from "react";
+import type { ParseProgress, ProfileData, Store, StructuredResume } from "../../types";
 import { emptyResume } from "../../hooks/useAppStore";
 import { KeyValueEditor } from "../KeyValueEditor";
+import { formatElapsed, progressLabel } from "../parseProgress";
 import { btn, btnBlock, btnPrimary, cx, statusText } from "../../ui";
 import { Loader2, Trash2 } from "lucide-react";
 import { WelcomeIntro } from "../welcome/WelcomeIntro";
@@ -24,6 +25,22 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
   const [unsupportedFiles, setUnsupportedFiles] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  // Reading documents takes long enough that a bare spinner reads as a hang.
+  const [progress, setProgress] = useState<ParseProgress | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    window.api.onResumeProgress(setProgress);
+    return () => window.api.onResumeProgress(null);
+  }, []);
+
+  useEffect(() => {
+    if (!busy) return;
+    const startedAt = Date.now();
+    setElapsed(0);
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
   function finish(finalFields: ProfileData, finalResume: StructuredResume): void {
     persist({
@@ -56,6 +73,7 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
 
   async function extractAndContinue(): Promise<void> {
     setStatus("");
+    setProgress(null);
     setBusy(true);
     try {
       const result = await window.api.parseResume(filePaths);
@@ -65,6 +83,7 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
       setResume(result.resume);
     } finally {
       setBusy(false);
+      setProgress(null);
       setStage("review");
     }
   }
@@ -135,12 +154,23 @@ export function ResumeOnboarding({ store, persist }: ResumeOnboardingProps) {
               {busy ? (
                 <span className="inline-flex items-center justify-center gap-2">
                   <Loader2 size={14} className="animate-spin" />
-                  Reading your documents…
+                  Working…
                 </span>
               ) : (
                 "Extract & Continue"
               )}
             </button>
+
+            {busy && (
+              <div className="mt-2 flex min-w-0 items-center gap-2 rounded-md border border-line bg-surface-0 px-3 py-2">
+                <span className="min-w-0 flex-1 truncate text-[11px] text-ink-soft">
+                  {progress ? progressLabel(progress) : "Starting…"}
+                </span>
+                <span className="flex-shrink-0 text-[11px] tabular-nums text-ink-faint">
+                  {formatElapsed(elapsed)}
+                </span>
+              </div>
+            )}
             <button
               type="button"
               className={cx(btn, btnBlock)}

@@ -1,11 +1,11 @@
-// Fills the active tab's form using the JSeeker app's model:
-// snapshot the page (content.js) -> hand the whole thing to the app, which
-// asks the configured model what goes where -> apply the answer.
+// The extension's service worker. Its only job is the in-page chat panel:
+// inject widget.js on demand, and relay the streamed reply between that panel
+// and the JSeeker app.
 //
-// The profile never comes into the browser; only the page goes out and a
-// list of {id, value} comes back. No auto-advance/auto-submit either — this
-// only fills fields; submitting a real application in the user's real
-// browser stays a manual, deliberate action.
+// Nothing here reads or writes the page's form fields. The panel sends up the
+// page's visible text (and only when the user leaves that switched on), and
+// what comes back is a conversation — nothing is ever typed into the page or
+// submitted on the user's behalf.
 
 const SERVER_URL = "http://127.0.0.1:8743";
 const TOKEN_KEY = "jseekerToken";
@@ -15,121 +15,19 @@ async function getToken() {
   return stored[TOKEN_KEY] || "";
 }
 
-function setBadge(text, color, title) {
-  chrome.action.setBadgeText({ text });
-  chrome.action.setBadgeBackgroundColor({ color });
-  chrome.action.setTitle({ title: title || "Fill this form with JSeeker" });
-}
-
-async function fillActiveTab(tabId) {
-  const token = await getToken();
-  if (!token) {
-    setBadge("!", "#eab308", "No sync token — see the extension's Options page");
-    return;
-  }
-
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-
-  const [{ result: snapshot }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => window.__jseekerSerialize(),
-  });
-
-  if (!snapshot || !snapshot.fields) {
-    setBadge("0", "#64748b", "No fillable fields found on this page");
-    return;
-  }
-
-  // The model reads the entire page, which on a local model is slow enough
-  // that the user needs to see something happening.
-  setBadge("…", "#3b82f6", `Reading ${snapshot.fields} fields…`);
-
-  let fills;
-  let attemptId;
-  try {
-    const res = await fetch(`${SERVER_URL}/autofill`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ page: snapshot.page, url: snapshot.url, title: snapshot.title }),
-    });
-    if (res.status === 401) {
-      setBadge("!", "#eab308", "JSeeker rejected the token — copy it again from Settings → Extension");
-      return;
-    }
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({}));
-      setBadge("!", "#ef4444", detail.error || `JSeeker responded ${res.status}`);
-      return;
-    }
-    ({ fills, id: attemptId } = await res.json());
-  } catch {
-    setBadge("!", "#ef4444", "Can't reach JSeeker — is the app running?");
-    return;
-  }
-
-  if (!Array.isArray(fills) || !fills.length) {
-    setBadge("0", "#64748b", "The model didn't find anything it could fill from your profile");
-    showBubble(tabId); // nothing filled is exactly when you want to ask why
-    return;
-  }
-
-  const [{ result: applied }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: (f) => window.__jseekerApplyFills(f),
-    args: [fills],
-  });
-
-  setBadge(String(applied), "#22c55e", `Filled ${applied} of ${snapshot.fields} fields`);
-  showBubble(tabId);
-
-  // Close the loop so the app can show what actually landed, not just what
-  // the model proposed. Best-effort — the fill already happened either way.
-  if (attemptId) {
-    fetch(`${SERVER_URL}/applied`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ id: attemptId, applied }),
-    }).catch(() => {});
-  }
-}
-
-chrome.action.onClicked.addListener((tab) => {
-  if (!tab.id) return;
-  fillActiveTab(tab.id);
-});
-
 // --- In-page chat panel (widget.js) ---
 //
-// Injected on demand: both the keyboard shortcut and the context menu item
-// grant activeTab for the current page, so the panel works anywhere without
-// the extension holding standing permission to read every site you visit.
+// Injected on demand: the toolbar icon, the keyboard shortcut and the context
+// menu item each grant activeTab for the current page, so the panel works
+// anywhere without the extension holding standing permission to read every
+// site you visit.
 
 function openWidget(tabId) {
   if (!tabId) return;
   chrome.scripting.executeScript({ target: { tabId }, files: ["widget.js"] });
 }
 
-/** Puts the bubble on the page without opening the panel — used after a fill,
- * so the chat is one click away exactly where it's useful instead of only
- * existing for whoever remembers the shortcut. */
-async function showBubble(tabId) {
-  if (!tabId) return;
-  try {
-    const [{ result: present }] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        if (window.__jseekerWidget) return true; // leave it as the user left it
-        document.documentElement.dataset.jseekerAutostart = "collapsed";
-        return false;
-      },
-    });
-    if (!present) {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ["widget.js"] });
-    }
-  } catch {
-    // Injection can fail on restricted pages; the fill itself already worked.
-  }
-}
+chrome.action.onClicked.addListener((tab) => openWidget(tab?.id));
 
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === "toggle-chat") openWidget(tab?.id);
@@ -156,11 +54,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "jseeker-chat") openWidget(tab?.id);
 });
 
-/** Streams one reply from the app to the panel. The panel can't call
- * 127.0.0.1 itself — in MV3 a content script's cross-origin requests come
- * from the page's origin, so the fetch has to happen here, where the
- * extension's host permission applies. */
-async function streamChat(port, messages, page) {
+/** Streams one reply from the app to the panel — a chat turn or a drafted
+ * document, which differ only in the route and the body. The panel can't call
+ * 127.0.0.1 itself: in MV3 a content script's cross-origin requests come from
+ * the page's origin, so the fetch has to happen here, where the extension's
+ * host permission applies. */
+async function streamFromApp(port, route, body) {
   const token = await getToken();
   if (!token) {
     port.postMessage({ type: "error", message: "No sync token set — see the extension's Options page." });
@@ -169,13 +68,21 @@ async function streamChat(port, messages, page) {
 
   let res;
   try {
-    res = await fetch(`${SERVER_URL}/chat`, {
+    res = await fetch(`${SERVER_URL}${route}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ messages, page }),
+      body: JSON.stringify(body),
     });
   } catch {
     port.postMessage({ type: "error", message: "Can't reach JSeeker — is the app running?" });
+    return;
+  }
+
+  if (res.status === 401) {
+    port.postMessage({
+      type: "error",
+      message: "JSeeker rejected the token — copy it again from Settings → Extension.",
+    });
     return;
   }
 
@@ -214,21 +121,31 @@ async function streamChat(port, messages, page) {
 
       if (event === "delta") port.postMessage({ type: "delta", text: data });
       else if (event === "error") port.postMessage({ type: "error", message: data });
+      else if (event === "artifact") port.postMessage({ type: "artifact", artifact: data });
       else if (event === "done") port.postMessage({ type: "done" });
     }
   }
 }
 
+/** A local model can take a while to answer, and an idle MV3 service worker
+ * is shut down long before that — taking the open stream with it, which the
+ * panel would see as the connection dropping mid-reply. Keeping the worker
+ * awake for the duration of a reply is the price of a slow model. */
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "jseeker-chat") return;
 
   port.onMessage.addListener((msg) => {
-    if (msg.type === "chat") {
-      streamChat(port, msg.messages, msg.page).catch((err) => {
-        port.postMessage({ type: "error", message: String(err) });
-      });
-    } else if (msg.type === "fill" && port.sender?.tab?.id) {
-      fillActiveTab(port.sender.tab.id);
-    }
+    const request =
+      msg.type === "chat"
+        ? { route: "/chat", body: { messages: msg.messages, page: msg.page, url: msg.url, title: msg.title } }
+        : msg.type === "document"
+          ? { route: "/document", body: { kind: msg.kind, page: msg.page, url: msg.url, title: msg.title } }
+          : null;
+    if (!request) return;
+
+    const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20000);
+    streamFromApp(port, request.route, request.body)
+      .catch((err) => port.postMessage({ type: "error", message: String(err) }))
+      .finally(() => clearInterval(keepAlive));
   });
 });

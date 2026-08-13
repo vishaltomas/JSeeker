@@ -1,6 +1,7 @@
 import {
-  Activity as ActivityIcon,
+  Clock,
   FileText,
+  Home as HomeIcon,
   MessageCircle,
   Settings as SettingsIcon,
   User,
@@ -8,9 +9,18 @@ import {
 import { cx } from "../ui";
 
 interface HeaderProps {
-  view: "profile" | "chat" | "builder" | "activity" | "settings";
-  onNavigate: (view: "profile" | "chat" | "builder" | "activity") => void;
+  view: "home" | "profile" | "chat" | "builder" | "history" | "settings";
+  onNavigate: (view: "home" | "profile" | "chat" | "builder" | "history") => void;
   onOpenSettings: () => void;
+}
+
+/** Right-hand icon buttons (Home, Settings) — no label, so they stay out of
+ * the way of the named sections on the left. */
+function iconButtonClass(active: boolean): string {
+  return cx(
+    "flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-full [-webkit-app-region:no-drag]",
+    active ? "bg-white/20 text-white" : "text-white/75 hover:bg-white/10 hover:text-white"
+  );
 }
 
 function navButtonClass(active: boolean): string {
@@ -47,16 +57,21 @@ export function Header({ view, onNavigate, onOpenSettings }: HeaderProps) {
           <FileText size={15} />
           Builder
         </button>
-        <button
-          className={navButtonClass(view === "activity")}
-          onClick={() => onNavigate("activity")}
-        >
-          <ActivityIcon size={15} />
-          Auto Tracker
+        <button className={navButtonClass(view === "history")} onClick={() => onNavigate("history")}>
+          <Clock size={15} />
+          History
         </button>
         <span className="flex-1" />
         <button
-          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-white/75 hover:bg-white/10 hover:text-white [-webkit-app-region:no-drag]"
+          className={iconButtonClass(view === "home")}
+          title="Home"
+          aria-label="Home"
+          onClick={() => onNavigate("home")}
+        >
+          <HomeIcon size={16} />
+        </button>
+        <button
+          className={iconButtonClass(view === "settings")}
           title="Settings"
           aria-label="Settings"
           onClick={onOpenSettings}

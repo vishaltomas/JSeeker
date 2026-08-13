@@ -9,31 +9,28 @@ export interface ChatSink {
   error(message: string): void;
 }
 
-/** A snapshot of the page the browser extension is filling: the visible page
- * text with every fillable control rendered as a tagged one-line element
- * (see extension/content.js `__jseekerSerialize`). The model reads the ids
- * out of this text itself — nothing on this side pre-labels the fields. */
-export interface PageSnapshot {
-  url?: string;
-  title?: string;
-  page: string;
-}
+/** Coarse progress for the document read, which is slow enough (PDF text
+ * extraction, then a full LLM pass over every document at once) that a bare
+ * spinner leaves the user guessing whether anything is happening. Reported
+ * from the main process and relayed to the renderer over IPC. */
+export type ParseProgress =
+  /** Pulling text out of one PDF; `index` is 1-based. */
+  | { stage: "reading"; file: string; index: number; total: number }
+  /** The model is generating the extraction — `chars` grows as it streams. */
+  | { stage: "extracting"; model: string; documents: number; chars: number }
+  /** Turning entries into vectors before the same/new comparison. */
+  | { stage: "embedding"; model: string; entries: number }
+  /** Walking the extraction against the existing profile. */
+  | { stage: "comparing"; mode: "embedding" | "lexical" };
 
-/** One control the model decided to fill. `id` is the `jid="…"` it read from
- * the snapshot; `value` is the text to type, the option to pick for a
- * `<select>`, or "true" for the radio/checkbox that should be selected —
- * extension/content.js knows each element's real type and interprets the
- * string accordingly. */
-export interface FieldFill {
-  id: string;
-  value: string;
-}
+/** Optional progress callback threaded through the slow paths. */
+export type ProgressSink = (progress: ParseProgress) => void;
 
 /** Well-known profile keys — resume extraction is guided (not restricted) to
  * use these when the info is present, but can add any other key it finds
  * useful via `extraFields` below. Not a schema, just a naming convention
- * that keeps the most-used fields predictably named, both in the Profile UI
- * and in the profile block the autofill prompt builds. */
+ * that keeps the most-used fields predictably named in the Profile UI and in
+ * the profile block the chat system prompt builds. */
 export const RESUME_ANCHOR_KEYS = [
   "firstName",
   "lastName",
@@ -60,8 +57,7 @@ export type ResumeFields = Record<string, string>;
  * array of {key,value} objects rather than an open JSON-schema dictionary
  * because structured-output "strict" JSON schema (both Ollama's and
  * Claude's) doesn't reliably support truly open `additionalProperties` —
- * an array of well-typed objects sidesteps that entirely, the same way
- * `FieldFill[]` already does for autofill. */
+ * an array of well-typed objects sidesteps that entirely. */
 export interface ExtraField {
   key: string;
   value: string;

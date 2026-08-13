@@ -79,8 +79,8 @@ export function AssistantPanel({ store, persist }: AssistantPanelProps) {
     <section>
       <h2 className={panelH2}>Assistant</h2>
       <p className={sectionHint}>
-        Powers the chat assistant and AI-assisted autofill (for form fields the rule-based
-        matcher can't confidently label).
+        Powers the chat assistant — both the Chat view and the browser extension's in-page
+        panel — and the first-run extraction of your profile from uploaded documents.
       </p>
       <div className={fieldGroup}>
         <label className={fieldLabel} htmlFor="set-provider">

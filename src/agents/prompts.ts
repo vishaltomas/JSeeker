@@ -1,5 +1,5 @@
 import type { Store } from "../main/store";
-import type { ExtraField, FieldFill, PageSnapshot, ResumeExtraction } from "./types";
+import type { ExtraField, ResumeExtraction } from "./types";
 import { RESUME_ANCHOR_KEYS } from "./types";
 
 /** System prompt seeded with the profile so the model can help fill
@@ -36,10 +36,10 @@ export function buildSystemPrompt(store: Store, pageContext?: string): string {
   return prompt.join("\n");
 }
 
-/** Everything the model should know about the applicant when filling a form:
- * the flat profile bag plus the structured resume, flattened to text. Richer
- * than the chat system prompt's profile block on purpose — application forms
- * ask for employers, dates and schools, not just contact details. */
+/** The applicant in full — the flat profile bag plus the structured resume.
+ * Richer than the chat system prompt's profile block on purpose: writing a
+ * cover letter needs employers, dates and bullet points, not just contact
+ * details. */
 function buildApplicantBlock(store: Store): string {
   const lines = Object.entries(store.data)
     .filter(([, value]) => value)
@@ -62,49 +62,78 @@ function buildApplicantBlock(store: Store): string {
   return lines.length ? lines.join("\n") : "(no info saved)";
 }
 
-/** Builds the shared prompt for whole-page autofill: the applicant's profile
- * plus a snapshot of the page the extension is looking at, asking the model
- * to find the fillable controls itself and answer with the `jid` of each one
- * it can fill (see src/main/extensionServer.ts POST /autofill, and
- * extension/content.js for how the snapshot is produced and applied). */
-export function buildPageAutofillPrompt(store: Store, snapshot: PageSnapshot): string {
-  return [
-    "You are filling out a job application form on behalf of the applicant described below.",
-    "",
-    "Applicant profile:",
+/** What the panel's document buttons ask for. The posting itself rides in as
+ * the page context, so this only has to say what to write and in what shape
+ * — the output is downloaded as a file, so it must be the document itself
+ * with no surrounding chat. */
+export function buildDocumentPrompt(store: Store, kind: "cover-letter" | "resume"): string {
+  const shared = [
+    "Applicant:",
     buildApplicantBlock(store),
     "",
-    `Page: ${snapshot.title || "(untitled)"} — ${snapshot.url || "(unknown url)"}`,
+    "Write from the applicant's own experience and nothing else — never invent employers,",
+    "dates, degrees, or numbers they haven't stated.",
+    "Output only the document itself: no preamble, no commentary, no code fences.",
+  ];
+
+  if (kind === "cover-letter") {
+    return [
+      "Write a cover letter for the job posting on this page, for the applicant below.",
+      "",
+      ...shared,
+      "",
+      "Three or four short paragraphs, first person, addressed to the hiring team. Open with the",
+      "specific role, connect two or three things from their background to what the posting asks",
+      "for, and close briefly. No greeting placeholders like [Hiring Manager Name] — if you don't",
+      "know a name, address the team.",
+    ].join("\n");
+  }
+
+  return [
+    "Write a resume for the applicant below, tailored to the job posting on this page.",
     "",
-    "The page's visible content follows. Every field the user can fill appears on its own line",
-    'as a tag carrying jid="…" — that id is how you refer to the field, so copy it exactly.',
-    "Lines without a tag are the page's own text: headings, questions and instructions that tell",
-    "you what the fields near them are asking for.",
+    ...shared,
     "",
-    "--- page ---",
-    snapshot.page,
-    "--- end page ---",
-    "",
-    "Return one entry per field you can fill, each with the field's exact jid and a value:",
-    '- text inputs and <textarea>: `value` is the text to type. For open questions ("why do you',
-    '  want this role?", "describe your experience with X"), write a short, specific answer',
-    "  grounded in the profile above — a few sentences, first person, no placeholders.",
-    "- <select>: `value` must be one of that field's listed options, copied verbatim.",
-    '- radio buttons and checkboxes: `value` is "true" for the option that should be selected.',
-    "  Radios sharing a `name` are one question — select at most one of them.",
-    "",
-    'Skip any field that already shows current="…" — the user filled that one already.',
-    "Skip fields the profile can't answer, and anything asking for a password, a payment detail,",
-    "or a file upload. Never invent employers, dates, degrees, salary figures, or work",
-    "authorization / visa / demographic answers that the profile doesn't state — leaving a",
-    "field for the user to complete is always better than guessing at one.",
+    "Plain Markdown: name and contact details at the top, then a short summary, then experience",
+    "(most recent first, with bullets), education, and skills. Reorder and reword their real",
+    "bullets to lead with what this posting cares about — selection and emphasis only.",
   ].join("\n");
 }
 
-/** Parse a model's JSON-mode response into field fills, tolerating either a
- * bare array or an object wrapping one, and coercing the id to a string (a
- * model that sees jid="12" will sometimes answer with the number 12). */
-export function parseFieldFills(content: string): FieldFill[] {
+/** Asks the model to pull reusable question/answer pairs out of one session's
+ * conversation, so answers the user worked out once become part of the
+ * profile. Keys are human-readable because they land in the same open bag the
+ * Profile view edits by hand. */
+export function buildAnswerExtractionPrompt(
+  conversation: { role: string; content: string }[]
+): string {
+  const transcript = conversation
+    .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+    .join("\n\n");
+
+  return [
+    "Below is a conversation between a job applicant and their assistant while applying for a",
+    "role. Pull out the facts about the applicant that would be worth reusing on the next",
+    "application — things an application form asks for that aren't already obvious contact",
+    "details: notice period, work authorization, salary expectations, why they want this kind of",
+    "role, how they'd describe a project, availability, and so on.",
+    "",
+    "--- conversation ---",
+    transcript,
+    "--- end conversation ---",
+    "",
+    "Give each one a short human-readable key (the question, roughly) and the applicant's answer",
+    "as the value. Take answers from what the applicant said about themselves, or from a draft",
+    "they accepted — not from the job posting, and not from the assistant's suggestions they",
+    "never confirmed. Return an empty list if nothing here is worth keeping.",
+  ].join("\n");
+}
+
+/** Parses the answer-extraction response into key/value pairs, tolerating a
+ * bare array or an object wrapping one, and dropping anything malformed
+ * rather than failing the batch — these are suggestions the user reviews, so
+ * a partial result is still useful. */
+export function parseExtractedAnswers(content: string): ExtraField[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -116,26 +145,29 @@ export function parseFieldFills(content: string): FieldFill[] {
     : Object.values(parsed as Record<string, unknown>).find(Array.isArray) ?? [];
   if (!Array.isArray(list)) return [];
 
-  const fills: FieldFill[] = [];
+  const answers: ExtraField[] = [];
   const seen = new Set<string>();
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const { id, value } = item as { id?: unknown; value?: unknown };
-    const key = typeof id === "string" ? id.trim() : typeof id === "number" ? String(id) : "";
-    if (!key || seen.has(key)) continue;
-    if (typeof value !== "string" || value.trim() === "") continue;
-    seen.add(key);
-    fills.push({ id: key, value });
+    const { key, value } = item as { key?: unknown; value?: unknown };
+    if (typeof key !== "string" || typeof value !== "string") continue;
+    const trimmedKey = key.trim();
+    const trimmedValue = value.trim();
+    if (!trimmedKey || !trimmedValue) continue;
+    const dedupe = trimmedKey.toLowerCase();
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    answers.push({ key: trimmedKey, value: trimmedValue });
   }
-  return fills;
+  return answers;
 }
 
 /** Builds the onboarding prompt asking a model to extract a profile from one
  * or more uploaded documents at once — deliberately open-ended rather than
- * hunting for a fixed list of fields: the well-known anchor keys are a
- * guide (so the browser extension's heuristic matcher, which looks them up
- * by exact name, keeps working), not a restriction — anything else useful
- * goes in `extraFields` with whatever key name fits. */
+ * hunting for a fixed list of fields: the well-known anchor keys are a guide
+ * (so the most-used fields land under predictable names in the Profile UI),
+ * not a restriction — anything else useful goes in `extraFields` with
+ * whatever key name fits. */
 export function buildResumeExtractionPrompt(documents: { filename: string; text: string }[]): string {
   const docBlocks = documents.map((d) => `--- ${d.filename} ---\n${d.text}`).join("\n\n");
 

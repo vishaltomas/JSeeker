@@ -3,13 +3,14 @@ import { spawn } from "child_process";
 import type { Store } from "../main/store";
 import { loadStore } from "../main/store";
 import { getMainWindow } from "../main/window";
-import type { ChatMessage, ChatSink, FieldFill, PageSnapshot, ResumeExtraction } from "./types";
+import type { ChatMessage, ChatSink, ExtraField, ProgressSink, ResumeExtraction } from "./types";
 import { RESUME_ANCHOR_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
+import { ensureEmbedModel } from "./embeddings";
 import {
-  buildPageAutofillPrompt,
+  buildAnswerExtractionPrompt,
   buildResumeExtractionPrompt,
   buildSystemPrompt,
-  parseFieldFills,
+  parseExtractedAnswers,
   parseResumeExtraction,
 } from "./prompts";
 
@@ -17,70 +18,6 @@ export const DEFAULT_HOST = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
 // Qwen2.5 3B (Ollama's default quant is Q4_K_M) — small enough to load and run
 // on low-VRAM consumer GPUs, which is what actually runs this app's default.
 export const DEFAULT_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:3b";
-
-/** Structured-output schema for a list of field fills — same reasoning as
- * RESUME_EXTRACTION_SCHEMA below: a schema keeps small local models from
- * answering with a differently-shaped JSON object. */
-const FIELD_FILLS_SCHEMA = {
-  type: "object",
-  properties: {
-    fills: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          id: { type: "string" },
-          value: { type: "string" },
-        },
-        required: ["id", "value"],
-      },
-    },
-  },
-  required: ["fills"],
-};
-
-/**
- * Ask the local Ollama model to read a whole page and decide what to type
- * into it — the browser extension hands over a snapshot of the page (see
- * src/main/extensionServer.ts) and the model picks out the fields itself.
- */
-export async function planPageAutofillWithOllama(
-  store: Store,
-  snapshot: PageSnapshot
-): Promise<FieldFill[]> {
-  const host = store.settings.ollamaHost || DEFAULT_HOST;
-  const model = store.settings.ollamaModel || DEFAULT_MODEL;
-  const prompt = [
-    buildPageAutofillPrompt(store, snapshot),
-    "",
-    'Reply with ONLY {"fills": [{"id": "<the field\'s jid>", "value": "<what to enter>"}]}.',
-    "Use an empty array if there is nothing you can confidently fill.",
-  ].join("\n");
-
-  const res = await fetch(`${host}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      stream: false,
-      format: FIELD_FILLS_SCHEMA,
-      // A page snapshot is far longer than this app's other prompts; the
-      // default 2k context would silently truncate away the second half of
-      // the form (and with it, the ids the answer has to reference).
-      options: { num_ctx: 32768 },
-    }),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Ollama responded ${res.status}. ${detail}`.trim());
-  }
-
-  const body = await res.json();
-  const content: string = body?.message?.content ?? "";
-  return parseFieldFills(content);
-}
 
 /** Structured-output schema for ResumeExtraction — every field required
  * (empty string/array when unknown). Smaller local models especially tend
@@ -100,20 +37,105 @@ const RESUME_EXTRACTION_SCHEMA = {
  * documents at once (see agents/types.ts `ResumeExtraction`). */
 export async function parseResumeWithOllama(
   store: Store,
-  documents: { filename: string; text: string }[]
+  documents: { filename: string; text: string }[],
+  onProgress?: ProgressSink
 ): Promise<ResumeExtraction> {
   const host = store.settings.ollamaHost || DEFAULT_HOST;
   const model = store.settings.ollamaModel || DEFAULT_MODEL;
   const prompt = buildResumeExtractionPrompt(documents);
 
+  // Streamed purely for the progress signal: a local model can spend a
+  // minute on a multi-page resume, and the growing character count is the
+  // only honest evidence that it's still working. The JSON is assembled and
+  // parsed at the end exactly as it was when this waited on one response.
   const res = await fetch(`${host}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
       messages: [{ role: "user", content: prompt }],
-      stream: false,
+      stream: true,
       format: RESUME_EXTRACTION_SCHEMA,
+    }),
+  });
+
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Ollama responded ${res.status}. ${detail}`.trim());
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let lastReport = 0;
+
+  onProgress?.({ stage: "extracting", model, documents: documents.length, chars: 0 });
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let newline: number;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line) continue;
+
+      const obj = JSON.parse(line);
+      if (obj.error) throw new Error(obj.error);
+      content += obj.message?.content ?? "";
+    }
+
+    // Throttled: token-rate IPC would flood the renderer for no extra clarity.
+    if (onProgress && Date.now() - lastReport > 250) {
+      lastReport = Date.now();
+      onProgress({ stage: "extracting", model, documents: documents.length, chars: content.length });
+    }
+  }
+
+  return parseResumeExtraction(content);
+}
+
+/** Reusable answers pulled out of one application session — a flat list of
+ * key/value pairs, the same shape the profile bag already stores. */
+const ANSWERS_SCHEMA = {
+  type: "object",
+  properties: {
+    answers: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { key: { type: "string" }, value: { type: "string" } },
+        required: ["key", "value"],
+      },
+    },
+  },
+  required: ["answers"],
+};
+
+/** Reads one session's conversation and returns the facts worth keeping (see
+ * main/sessions.ts). Not streamed and not on the hot path — the user asks for
+ * it from the History view when they're ready to review. */
+export async function extractAnswersWithOllama(
+  store: Store,
+  conversation: { role: string; content: string }[]
+): Promise<ExtraField[]> {
+  const host = store.settings.ollamaHost || DEFAULT_HOST;
+  const model = store.settings.ollamaModel || DEFAULT_MODEL;
+
+  const res = await fetch(`${host}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: buildAnswerExtractionPrompt(conversation) }],
+      stream: false,
+      format: ANSWERS_SCHEMA,
+      // A whole conversation is longer than this app's other one-shot
+      // prompts; the default context would cut off the earliest turns.
+      options: { num_ctx: 16384 },
     }),
   });
 
@@ -123,8 +145,7 @@ export async function parseResumeWithOllama(
   }
 
   const body = await res.json();
-  const content: string = body?.message?.content ?? "";
-  return parseResumeExtraction(content);
+  return parseExtractedAnswers(body?.message?.content ?? "");
 }
 
 function friendlyOllamaError(err: unknown, host: string, model: string): string {
@@ -353,6 +374,10 @@ async function runOllamaSequence(host: string, model: string): Promise<void> {
     }
     await warmModel(host, model);
     broadcastOllamaStatus({ state: "ready", model });
+    // Small extra pull, deliberately not awaited: it only matters when the
+    // user merges a document into their profile, and until it lands that
+    // merge just compares text lexically instead.
+    void ensureEmbedModel(host);
   } catch (err) {
     broadcastOllamaStatus({
       state: "error",

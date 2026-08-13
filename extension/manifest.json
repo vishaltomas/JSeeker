@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "JSeeker Autofill",
-  "version": "2.1.0",
-  "description": "Fill job application forms in your browser using your JSeeker profile and resume, and ask JSeeker about the page you're on.",
+  "name": "JSeeker Chat",
+  "version": "3.0.0",
+  "description": "A floating chat panel on any page, backed by your JSeeker profile and resume — ask about the posting you're on and draft answers to its questions.",
   "permissions": ["storage", "activeTab", "scripting", "contextMenus"],
   "host_permissions": ["http://127.0.0.1:8743/*"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Fill this form with JSeeker",
+    "default_title": "Ask JSeeker about this page",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

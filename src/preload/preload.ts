@@ -41,6 +41,13 @@ interface ResumeParseResult {
   error?: string;
 }
 
+interface ProfileMergeResult {
+  fields: Record<string, string>;
+  resume: StructuredResume;
+  report: unknown;
+  error?: string;
+}
+
 interface BuilderFile {
   name: string;
   path: string;
@@ -54,16 +61,24 @@ interface PdfExportResult {
   error?: string;
 }
 
-interface ExtensionActivity {
+
+interface SessionArtifact {
   id: string;
-  at: number;
-  state: "reading" | "filled" | "error";
-  url?: string;
-  title?: string;
-  fields?: number;
-  planned?: number;
-  applied?: number;
-  message?: string;
+  kind: "cover-letter" | "resume";
+  content: string;
+  createdAt: number;
+}
+
+interface ApplicationSession {
+  id: string;
+  url: string;
+  host: string;
+  title: string;
+  startedAt: number;
+  updatedAt: number;
+  messages: { role: "user" | "assistant"; content: string; at: number }[];
+  artifacts: SessionArtifact[];
+  answers: { key: string; value: string; saved: boolean }[];
 }
 
 type OllamaStatus =
@@ -71,6 +86,12 @@ type OllamaStatus =
   | { state: "pulling"; model: string; percent: number; detail: string }
   | { state: "ready"; model: string }
   | { state: "error"; message: string };
+
+// Progress narration for the document read/merge. Registered once here and
+// dispatched to whatever the renderer last subscribed with, so repeatedly
+// mounting the Profile view can't stack up listeners.
+let resumeProgressCb: ((progress: unknown) => void) | null = null;
+ipcRenderer.on("resume:progress", (_event, progress: unknown) => resumeProgressCb?.(progress));
 
 contextBridge.exposeInMainWorld("api", {
   versions: {
@@ -85,6 +106,19 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("dialog:pickResumeFiles"),
   parseResume: (filePaths: string[]): Promise<ResumeParseResult> =>
     ipcRenderer.invoke("resume:parse", { filePaths }),
+  /** Folds an extraction into the profile as it stands, comparing entries by
+   * meaning so nothing already there is overwritten or duplicated. Returns
+   * the merged profile plus a report of what changed; saving is up to the
+   * caller. */
+  mergeProfile: (
+    current: { fields: Record<string, string>; resume: StructuredResume },
+    incoming: { fields: Record<string, string>; resume: StructuredResume }
+  ): Promise<ProfileMergeResult> => ipcRenderer.invoke("resume:merge", { current, incoming }),
+  /** Step-by-step progress for `parseResume`/`mergeProfile`. Pass null to
+   * stop listening. */
+  onResumeProgress: (cb: ((progress: unknown) => void) | null): void => {
+    resumeProgressCb = cb;
+  },
   /** The builder's workspace of `.resb` documents — see main/builderWorkspace.ts. */
   builder: {
     list: (): Promise<{ dir: string; files: BuilderFile[] }> =>
@@ -104,19 +138,25 @@ contextBridge.exposeInMainWorld("api", {
     pick: (): Promise<{ canceled?: boolean; name?: string; content?: string; error?: string }> =>
       ipcRenderer.invoke("builder:pick"),
   },
+  /** Application sessions recorded by the extension — see main/sessions.ts. */
+  sessions: {
+    list: (): Promise<ApplicationSession[]> => ipcRenderer.invoke("sessions:list"),
+    remove: (id: string): Promise<ApplicationSession[]> => ipcRenderer.invoke("sessions:delete", id),
+    extractAnswers: (
+      id: string
+    ): Promise<{ answers: { key: string; value: string }[]; error?: string }> =>
+      ipcRenderer.invoke("sessions:extractAnswers", id),
+    markAnswersSaved: (id: string, keys: string[]): Promise<ApplicationSession[]> =>
+      ipcRenderer.invoke("sessions:markAnswersSaved", { id, keys }),
+  },
   /** Renders a compiled resume document to PDF, prompting for a save
    * location. `name` seeds the suggested file name. */
   exportPdf: (html: string, name?: string): Promise<PdfExportResult> =>
     ipcRenderer.invoke("pdf:export", { html, name }),
+  /** Whether the local server the browser extension's chat panel talks to is
+   * up — see main/extensionServer.ts. */
   extensionInfo: (): Promise<{ port: number; listening: boolean; error?: string }> =>
     ipcRenderer.invoke("extension:info"),
-  /** Live autofill attempts from the browser extension — see
-   * main/extensionServer.ts. */
-  onExtensionActivity: (cb: (entry: ExtensionActivity) => void): void => {
-    ipcRenderer.on("extension:activity", (_event, entry: ExtensionActivity) => cb(entry));
-  },
-  getExtensionActivity: (): Promise<ExtensionActivity[]> =>
-    ipcRenderer.invoke("extension:activity:get"),
   /** Opens an http(s) URL in the user's browser. Resolves false if the main
    * process rejected the scheme. */
   openExternal: (url: string): Promise<boolean> =>

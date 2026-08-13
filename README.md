@@ -1,27 +1,106 @@
 # JSeeker
 
-A desktop app for job seekers: keep one profile and resume in a single place, let a
-local or hosted LLM answer questions about it, autofill application forms in the
-browser, and lay out a resume in a small purpose-built language.
+A desktop app for job seekers. Keep one profile in one place, let a local or hosted
+LLM answer questions about it — in the app, or in a floating panel on whatever job
+posting you happen to be reading — and lay out the resume itself in a small
+purpose-built language that exports to PDF.
 
-Electron + React 19 + TypeScript, bundled with Vite and styled with Tailwind v4.
+Everything runs on your machine. With a local model, nothing leaves it at all.
 
-## Features
+**Electron · React 19 · TypeScript · Vite · Tailwind v4 · Ollama / Claude API · Chrome MV3**
 
-- **Profile** — one flat key/value bag plus structured resume sections (experience,
-  education, skills, languages). Seeded on first run by extracting text from
-  uploaded PDFs.
-- **Chat** — streaming conversation with your profile as context, backed by either a
-  local Ollama model or the Claude API.
-- **Builder** — a split-pane editor for `.resb` source with a live HTML preview.
-- **Browser autofill** — a Chrome extension hands the whole application page to the
-  model, which picks out the fields and answers with what to put in each one.
+![The landing page](docs/screenshots/landing.png)
 
-## Requirements
+---
 
-- Node 20+
-- [Ollama](https://ollama.com) if you want to run models locally (optional — you can
-  use the Claude API instead)
+## What it does
+
+### Ask it what it can do
+
+The landing page answers that itself — animated panels for the three things the app
+is actually for, rather than a page of documentation.
+
+![What I can do](docs/screenshots/capabilities.png)
+
+### One profile, filled in for you
+
+Drop in a resume PDF on first run. The text is extracted, turned into structured
+sections — experience, education, skills, languages — and folded into the profile
+by *meaning*, so importing a second document enriches what's there instead of
+duplicating it. Everything stays editable by hand.
+
+![Profile](docs/screenshots/profile.png)
+
+### An assistant that already knows your background
+
+Streaming chat with your profile as context, so you never re-explain yourself.
+Runs against a local Ollama model by default, or the Claude API if you prefer.
+
+![Chat](docs/screenshots/chat.png)
+
+### A resume you write like code
+
+`.resb` is a small language for resume layout: declare the components once, supply
+the content once, get a typeset page. Live preview, font and accent switching,
+export to PDF.
+
+![Builder](docs/screenshots/builder.png)
+
+### On the posting, not beside it
+
+A Chrome extension puts the same assistant on any job page with `Alt+J`. It reads
+the posting in front of you and can draft a cover letter or a tailored resume from
+it. Every posting you work on is filed in **History** — what it produced, what you
+asked, and the answers worth keeping for next time.
+
+![History](docs/screenshots/history.png)
+
+---
+
+## Key concepts
+
+What's actually going on behind the five screens above.
+
+**Desktop architecture** — Electron main/renderer split with `contextIsolation` on and
+no Node in the renderer; every privileged operation (disk, dialogs, network, PDF) crosses
+a typed `contextBridge` API over IPC. React state is deliberately flat: one store object,
+persisted as JSON, with views kept mounted and toggled by CSS so drafts survive
+navigation.
+
+**A small language, end to end** — the resume builder is a real pipeline:
+`tokenizer → parser → AST → renderer → compiled HTML`. Unknown arguments are compile
+errors rather than silent no-ops, and the same compiled document is what gets printed
+to PDF.
+
+**LLM integration** — one provider interface with two implementations (local Ollama,
+Anthropic API), token-by-token streaming pushed to the UI over IPC, prompt construction
+from structured profile data, and a first-run model pull with live progress.
+
+**Semantic merging** — importing a second document compares entries by embedding
+similarity, not string equality, so "Frontend Engineer @ Northwind" and "Frontend
+Engineer, Northwind Labs" are recognised as the same role. Falls back to lexical overlap
+when no embedding model is available.
+
+**Browser extension (MV3)** — content script rendering into a closed shadow root so the
+host page's CSS and ours can't collide, a service worker relaying server-sent events from
+a local HTTP server (a content script can't reach `127.0.0.1` itself), and `activeTab`
+rather than `<all_urls>` — the extension holds no standing permission to read your
+browsing.
+
+**Local API surface** — the desktop app runs a small authenticated HTTP server for the
+extension to talk to: bearer token, SSE streaming, and session records keyed by posting
+URL so returning to a page continues its history rather than starting a second one.
+
+**Interface** — Tailwind v4 with semantic design tokens instead of raw hex, CSS-driven
+animation throughout (staggered entrances, looping illustrations), and
+`prefers-reduced-motion` respected everywhere.
+
+**Privacy by construction** — the extension only ever *reads* a page; it never types,
+clicks, or submits. Your profile never enters the browser — page text goes to the app,
+only the reply comes back. Nothing extracted from a conversation is written to your
+profile until you accept it.
+
+---
 
 ## Getting started
 
@@ -30,180 +109,70 @@ npm install
 npm start          # build main + renderer, then launch Electron
 ```
 
-For iterative work, run these in separate terminals:
+Optional: [Ollama](https://ollama.com) for local models — otherwise add a Claude API key
+under **Settings → Assistant**. Node 20+.
+
+For iterative work, in separate terminals:
 
 ```bash
-npm run dev            # tsc --watch for the main/preload processes
-npm run dev:renderer   # vite build --watch for the renderer
+npm run dev            # tsc --watch for main/preload
+npm run dev:renderer   # vite build --watch
 npm run dev:electron   # launch Electron against the built output
 ```
 
-### Other scripts
-
 | Script | Does |
 | --- | --- |
-| `npm run build` | Builds both the main process and the renderer |
-| `npm run build:main` | `tsc` over `src/main` and `src/preload` → `dist/` |
-| `npm run build:renderer` | Vite build → `dist/renderer/` |
+| `npm run build` | Builds the main process and the renderer |
 | `npm run typecheck:renderer` | Typechecks the renderer without emitting |
+| `npx tsc --noEmit -p src/resume_builder/tsconfig.json` | Typechecks the resume language |
+| `npx electron scripts/screenshots/capture.js` | Regenerates the screenshots above from stub data |
 
-The resume builder has its own config; typecheck it with
-`npx tsc --noEmit -p src/resume_builder/tsconfig.json`.
+### The browser extension
+
+`chrome://extensions` → Developer mode → **Load unpacked** → pick `extension/`, then
+paste the token from **Settings → Extension** into its options page. `Alt+J` on any page
+opens the panel.
+
+---
 
 ## Project layout
 
 ```
 src/
-  main/          Electron main process
-    main.ts            window creation, app lifecycle
-    store.ts           JSON persistence in Electron's userData dir
-    files.ts           file dialogs and reads
-    extensionServer.ts local HTTP server the browser extension talks to
-  preload/       contextBridge API exposed to the renderer as window.api
-  renderer/      React UI
-    components/        Profile, Chat, Builder, Settings views
-    hooks/             store loading, chat, Ollama status
-  agents/        LLM providers and prompts
-    ollama.ts          local models, incl. first-run pull with progress
-    claude.ts          Anthropic API
-    resumeExtract.ts   PDF text extraction
-  resume_builder/  the .resb language (see below)
-extension/       Chrome MV3 autofill extension
+  main/            Electron main process — windows, JSON store, files,
+                   local server for the extension, session history
+  preload/         the contextBridge API exposed as window.api
+  renderer/        React UI — Landing, Profile, Chat, Builder, History, Settings
+  agents/          LLM providers (Ollama, Claude), prompts, PDF extraction
+  resume_builder/  the .resb language: tokenizer, parser, renderer, compiler
+extension/         Chrome MV3 in-page assistant
+scripts/           screenshot capture harness
 ```
 
-## The resume builder
+## A taste of `.resb`
 
-A small language for describing resume layout. The pipeline is
-`tokenizer → parser → uiRenderer → compile`, ending in a standalone HTML document
-that the Builder view shows in a sandboxed iframe.
-
-A document has two sections. `macro:` defines named components and their styling;
-`main:` supplies the content for each one.
+`macro:` declares the components and how they're styled. `main:` supplies the content
+for each one, `|` splitting a block across its columns.
 
 ```
 macro:(
-    Name: Cell(fw : 700, fs : 28, align : 'Center'),
-    Contact: Block(
-        Cell(fs : 12), Cell(fs : 12), Cell(fs : 12)
+    Name: Cell(fw : 700, fs : 30, ta : 'Center'),
+    Role: Block(spread : 'Between', gap : 16,
+        Cell(fs : 13, grow : 1),
+        Cell(fs : 13, nowrap : 1)
     )
 )
 main:(
     Name: 'Your Name',
-    Contact: 'city, country' | 'you@example.com' | 'github.com/you'
+    Role: '**Frontend Engineer**, Northwind Labs' | 'Mar 2022 – Present'
 )
 ```
 
-A macro defined as a `Cell` takes one string. A `Block` takes one per child cell,
-separated by `|`, distributed left to right.
+The full argument reference lives in the Builder's **Docs** tab, beside the source it
+describes.
 
-### Keywords
+## Data
 
-`Cell` is a single region of text. `Block` is a horizontal band that lays its child
-cells out in equal columns.
-
-### Cell arguments
-
-| Short | Long | Values |
-| --- | --- | --- |
-| `fw` | `fontWeight` | number |
-| `fs` | `fontSize` | number (px) |
-| `fst` | `fontStyle` | `Normal`, `Italic`, `SkewSmall`, `SkewMedium`, `SkewLarge` |
-| `al` | `align` | `Top`, `Bottom`, `Left`, `Right`, `Center` |
-| `pd` | `padding` | `Top`, `Bottom`, `Left`, `Right`, `All` |
-| `ps` | `paddingSize` | number (steps of 4px) |
-| `txt` | `text` | string |
-| `cls` | `className` | string |
-
-`Block` accepts `name`. Its children and column count come from the parsed source
-and aren't settable directly.
-
-### Syntax notes
-
-- Strings use single or double quotes; numbers are integers.
-- Comments are `//` to end of line, or `/* … */`.
-- An argument name not in the table above is a compile error, so typos surface
-  rather than being silently dropped.
-
-### Debugging the parser
-
-`src/resume_builder/runner.ts` parses `samples/sample-resume.resb` and prints the
-AST:
-
-```bash
-cd src/resume_builder
-npx tsx runner.ts
-```
-
-Set `parser.debugTokens = true` to also dump the token stream.
-
-## LLM providers
-
-Configured under **Settings → Assistant**.
-
-- **Ollama** (default) — talks to `http://127.0.0.1:11434`, model `qwen2.5:3b`.
-  Both are overridable in settings or via the `OLLAMA_HOST` / `OLLAMA_MODEL`
-  environment variables. The app pulls the model on first run and reports progress
-  in the footer.
-- **Claude** — needs an API key in settings. The footer only checks that a key is
-  present; it doesn't ping the API, since that would cost real usage.
-
-## Browser extension
-
-`extension/` is an unpacked Chrome MV3 extension. Load it via
-`chrome://extensions` → Developer mode → **Load unpacked**.
-
-Clicking its icon on an application page runs one round trip:
-
-1. `content.js` walks the visible page and serializes it — the page's own text plus
-   one line per fillable control, each tagged `jid="f<n>"` (backed by a
-   `data-jseeker-id` attribute on the element). Scripts, styles and hidden subtrees
-   are dropped, and the whole thing is capped at 48k characters.
-2. `background.js` posts that snapshot to `POST http://127.0.0.1:8743/autofill`.
-3. The app builds a prompt from the snapshot plus your profile and resume, and the
-   configured model answers with `{id, value}` entries — the model is what finds the
-   fields and decides what belongs in them; there's no rule-based matching anywhere.
-4. `content.js` applies each entry against the element with that id, interpreting the
-   value by the element's real type: text for inputs and textareas, an option match
-   for `<select>`, and `"true"` to select a radio or tick a checkbox.
-
-Applying only ever fills something in — an existing value is never overwritten, a
-checked box is never unchecked, and nothing is ever submitted.
-
-While that runs, the app isn't silent about it: the footer shows the fill in progress,
-and the **Auto Tracker** tab lists every attempt — how many fields were on the page, how many
-the model answered, and how many actually landed (the extension reports that last number
-back via `POST /applied`). The list is in memory only, so it covers the current session
-and isn't written to disk.
-
-The request must present the bearer token from **Settings → Extension**. The token is
-generated once and kept stable. It isn't protecting against filesystem access —
-`store.json` is plaintext like everything else — just stopping other local processes
-and web pages from triggering fills. Note that the profile itself never enters the
-browser: the page goes to the app, and only the fill list comes back.
-
-Two known limits: forms inside a cross-origin `<iframe>` (some Greenhouse and Workday
-embeds) aren't reached, since only the top frame is injected; and a very long form can
-hit the snapshot cap, in which case the tail of the page isn't seen.
-
-### In-page chat
-
-`Alt+J` — or right-click → **Ask JSeeker about this page** — drops a floating chat panel
-into the current page ([widget.js](extension/widget.js)), styled inside a closed shadow
-root so the host page's CSS and ours stay out of each other's way. It's the same
-assistant as the app's Chat view, with the page's text added to the system prompt, so it
-can answer about the posting in front of you. A checkbox turns that off, and the panel
-has a **Fill form** button so you don't have to go back to the toolbar.
-
-Both entry points grant `activeTab` for that page only — the extension holds no standing
-permission to read the sites you visit. (Grammarly-style "always there on every page"
-would mean `<all_urls>`, which is a much broader grant; this stays on-demand.)
-
-Replies stream over `POST /chat` as server-sent events. The panel can't call
-`127.0.0.1` itself — in MV3 a content script's cross-origin requests come from the
-page's origin — so `background.js` makes the call and relays deltas over a
-`chrome.runtime` port.
-
-## Data and secrets
-
-Profile data lives in `store.json` under Electron's `userData` directory, in
-plaintext. `api.key`, `models/`, and `dist/` are gitignored.
+Your profile is a plain `store.json` in Electron's `userData` directory; posting history
+is `sessions.json` next to it. Both are yours, in the clear, on your disk. `api.key`,
+`models/`, and `dist/` are gitignored.

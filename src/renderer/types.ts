@@ -74,6 +74,50 @@ export interface ResumeParseResult {
   error?: string;
 }
 
+/** Where the document read has got to — see agents/types.ts. */
+export type ParseProgress =
+  | { stage: "reading"; file: string; index: number; total: number }
+  | { stage: "extracting"; model: string; documents: number; chars: number }
+  | { stage: "embedding"; model: string; entries: number }
+  | { stage: "comparing"; mode: "embedding" | "lexical" };
+
+/** Per-section tally from folding a document into the profile. */
+export interface SectionReport {
+  added: number;
+  matched: number;
+  enriched: number;
+}
+
+/** A field the document disagreed with the profile about. The profile's value
+ * is always the one kept; this is what the document said instead. */
+export interface FieldConflict {
+  key: string;
+  kept: string;
+  incoming: string;
+}
+
+/** What a merge changed — see agents/reconcile.ts. */
+export interface MergeReport {
+  /** "lexical" means the embedding model wasn't available and entries were
+   * compared by word overlap only. */
+  mode: "embedding" | "lexical";
+  fieldsAdded: string[];
+  fieldConflicts: FieldConflict[];
+  summary: "kept" | "added" | "extended";
+  experience: SectionReport;
+  bulletsAdded: number;
+  education: SectionReport;
+  skills: SectionReport;
+  languages: SectionReport;
+}
+
+export interface ProfileMergeResult {
+  fields: ProfileData;
+  resume: StructuredResume;
+  report: MergeReport;
+  error?: string;
+}
+
 /** A `.resb` document in the builder's workspace — see main/builderWorkspace.ts. */
 export interface BuilderFile {
   name: string;
@@ -99,22 +143,42 @@ export type OllamaStatus =
   | { state: "ready"; model: string }
   | { state: "error"; message: string };
 
-/** One autofill attempt by the browser extension, as the app sees it — see
- * main/extensionServer.ts. Updated in place as the attempt progresses, so
- * entries are merged by `id`. */
-export interface ExtensionActivity {
-  id: string;
+
+/** One application session recorded by the browser extension — see
+ * main/sessions.ts. Everything said on one job posting, plus what it
+ * produced. */
+export interface SessionMessage {
+  role: "user" | "assistant";
+  content: string;
   at: number;
-  state: "reading" | "filled" | "error";
-  url?: string;
-  title?: string;
-  /** Fillable controls the extension found on the page. */
-  fields?: number;
-  /** Values the model returned. */
-  planned?: number;
-  /** Values that actually landed — absent until the extension reports back. */
-  applied?: number;
-  message?: string;
+}
+
+export interface SessionArtifact {
+  id: string;
+  kind: "cover-letter" | "resume";
+  content: string;
+  createdAt: number;
+}
+
+/** A question this application asked and the answer given, harvested from the
+ * conversation so it can be reused on the next one. */
+export interface SessionAnswer {
+  key: string;
+  value: string;
+  /** Whether the user has accepted it into their profile. */
+  saved: boolean;
+}
+
+export interface ApplicationSession {
+  id: string;
+  url: string;
+  host: string;
+  title: string;
+  startedAt: number;
+  updatedAt: number;
+  messages: SessionMessage[];
+  artifacts: SessionArtifact[];
+  answers: SessionAnswer[];
 }
 
 export interface Api {
@@ -123,6 +187,14 @@ export interface Api {
   saveStore: (store: Store) => Promise<boolean>;
   pickResumeFiles: () => Promise<string[]>;
   parseResume: (filePaths: string[]) => Promise<ResumeParseResult>;
+  /** Folds an extraction into the current profile, comparing entries by
+   * meaning; returns the merged profile and a report of what changed. */
+  mergeProfile: (
+    current: { fields: ProfileData; resume: StructuredResume },
+    incoming: { fields: ProfileData; resume: StructuredResume }
+  ) => Promise<ProfileMergeResult>;
+  /** Progress for `parseResume`/`mergeProfile`; pass null to stop listening. */
+  onResumeProgress: (cb: ((progress: ParseProgress) => void) | null) => void;
   /** The builder's workspace of `.resb` documents. */
   builder: {
     list: () => Promise<{ dir: string; files: BuilderFile[] }>;
@@ -135,11 +207,19 @@ export interface Api {
     /** Reads a `.resb` file from anywhere on disk, without importing it. */
     pick: () => Promise<{ canceled?: boolean; name?: string; content?: string; error?: string }>;
   };
+  /** Application sessions recorded by the extension — see main/sessions.ts. */
+  sessions: {
+    list: () => Promise<ApplicationSession[]>;
+    remove: (id: string) => Promise<ApplicationSession[]>;
+    /** Asks the model to pull reusable answers out of one session's
+     * conversation. Slow on a local model; the History view asks on demand. */
+    extractAnswers: (id: string) => Promise<{ answers: { key: string; value: string }[]; error?: string }>;
+    markAnswersSaved: (id: string, keys: string[]) => Promise<ApplicationSession[]>;
+  };
   /** Renders a compiled resume document to PDF, prompting for a location. */
   exportPdf: (html: string, name?: string) => Promise<PdfExportResult>;
+  /** Whether the local server the browser extension's chat panel talks to is up. */
   extensionInfo: () => Promise<{ port: number; listening: boolean; error?: string }>;
-  onExtensionActivity: (cb: (entry: ExtensionActivity) => void) => void;
-  getExtensionActivity: () => Promise<ExtensionActivity[]>;
   /** Opens an http(s) URL in the user's browser; false if the scheme was refused. */
   openExternal: (url: string) => Promise<boolean>;
   onOllamaStatus: (cb: (status: OllamaStatus) => void) => void;
