@@ -1,5 +1,20 @@
 export type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 
+/** A tool call, as the user watching the chat sees it. Reaching for a tool is
+ * the one thing an assistant does that takes real time and isn't visible in
+ * the reply — reading a job posting can take several seconds, and a bare
+ * cursor for that long reads as a hang. */
+export interface ToolActivity {
+  /** The tool's name, e.g. `read_web_page`. */
+  name: string;
+  /** One line for a person: "Reading jobs.example.com". */
+  detail: string;
+  status: "start" | "done" | "error";
+  /** Set when `status` is `"error"`. The turn continues — the model is told
+   * what went wrong and gets to react — so this is narration, not a failure. */
+  message?: string;
+}
+
 /** Where a streamed chat reply goes. The app's own chat sends it over IPC to
  * the renderer; the browser extension's in-page panel sends it out as SSE
  * (see main/extensionServer.ts) — the providers don't need to know which. */
@@ -7,6 +22,19 @@ export interface ChatSink {
   delta(text: string): void;
   done(full: string): void;
   error(message: string): void;
+  /** Optional: a caller that doesn't show tool activity simply omits it. */
+  tool?(activity: ToolActivity): void;
+}
+
+/** Per-turn switches for a chat request. */
+export interface ChatOptions {
+  /**
+   * Whether the model may call tools (see agents/toolDefs.ts). On by default
+   * for conversation; off for the drafting buttons, whose output is written
+   * straight to a file — a tool call mid-document would land in the middle of
+   * a cover letter.
+   */
+  tools?: boolean;
 }
 
 /** Coarse progress for the document read, which is slow enough (PDF text

@@ -63,6 +63,13 @@
       .user { align-self: flex-end; background: #2563eb; color: #fff; }
       .bot { align-self: flex-start; background: #292a2f; }
       .err { align-self: stretch; background: #3b1d1d; color: #fca5a5; }
+      /* What the assistant is doing, not what it said — so it sits flat
+         against the panel rather than in a bubble of its own. */
+      .tool {
+        align-self: flex-start; background: none; padding: 0 2px;
+        color: #8b8d95; font-size: 12px;
+      }
+      .tool-failed { color: #c48b8b; }
       .hint { color: #6b7280; font-size: 12px; }
       .doc {
         align-self: flex-start; max-width: 100%; width: 100%;
@@ -146,7 +153,9 @@
 
   function addMessage(role, text) {
     const el = document.createElement("div");
-    el.className = "msg " + (role === "user" ? "user" : role === "error" ? "err" : "bot");
+    el.className =
+      "msg " +
+      (role === "user" ? "user" : role === "error" ? "err" : role === "tool" ? "tool" : "bot");
     el.textContent = text;
     log.appendChild(el);
     log.scrollTop = log.scrollHeight;
@@ -237,6 +246,26 @@
         history.push({ role: "assistant", content: pending.textContent });
       }
       finish();
+      return;
+    }
+    // The assistant reaching for a tool — reading this posting, writing a
+    // document into the app. It takes seconds and leaves no trace in the
+    // reply, so it gets a line of its own that updates in place when the tool
+    // finishes. A failed tool is narration too: the model is told and carries
+    // on, so it must not look like the answer died.
+    if (msg.type === "tool") {
+      const { name, detail, status } = msg.activity || {};
+      if (status === "start") {
+        const el = addMessage("tool", `… ${detail}`);
+        el.dataset.tool = name;
+        return;
+      }
+      const rows = log.querySelectorAll(`.msg.tool[data-tool="${CSS.escape(name || "")}"]`);
+      const row = rows[rows.length - 1];
+      if (row) {
+        row.textContent = status === "error" ? `× ${detail}` : `✓ ${detail}`;
+        if (status === "error") row.classList.add("tool-failed");
+      }
       return;
     }
     if (msg.type === "artifact") return; // the app filed it; nothing to show

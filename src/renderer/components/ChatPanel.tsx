@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
-import { Globe, Mic, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, Check, Globe, Loader2, Mic, Plus, Trash2, X } from "lucide-react";
 import { useChat } from "../hooks/useChat";
-import type { ChatBubble } from "../hooks/useChat";
+import type { ChatBubble, ChatToolNote } from "../hooks/useChat";
 import { Markdown } from "./Markdown";
 import { cx } from "../ui";
 
@@ -35,6 +35,41 @@ function bubbleClass(kind: ChatBubble["kind"]): string {
   // assistant — rendered as markdown, which brings its own block layout, so no
   // whitespace-pre-wrap here (it would double up with paragraphs and lists)
   return cx(base, "border-line-subtle bg-surface-2");
+}
+
+/**
+ * What the assistant did while answering — one line per tool call.
+ *
+ * Shown above the reply and kept there after the turn: reading a posting takes
+ * seconds with nothing to show for it, and "wrote resume-2.resb" is the answer
+ * to a question the user asks later. A spinner while it runs, a tick when it
+ * lands, and a muted warning if the tool failed — the model is told about the
+ * failure and carries on, so it isn't the turn that broke.
+ */
+function ToolNotes({ notes }: { notes: ChatToolNote[] }) {
+  return (
+    <div className="flex flex-col gap-1 px-1 pb-1">
+      {notes.map((note, i) => (
+        <div
+          key={`${note.name}-${i}`}
+          className={cx(
+            "flex items-center gap-1.5 text-[11.5px] leading-tight",
+            note.status === "error" ? "text-danger-text" : "text-ink-faint"
+          )}
+          title={note.message}
+        >
+          {note.status === "start" ? (
+            <Loader2 size={11} className="flex-shrink-0 animate-spin" />
+          ) : note.status === "error" ? (
+            <AlertCircle size={11} className="flex-shrink-0" />
+          ) : (
+            <Check size={11} className="flex-shrink-0" />
+          )}
+          <span className="truncate">{note.detail}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function TypingDots() {
@@ -102,13 +137,18 @@ export function ChatPanel({ open }: ChatPanelProps) {
           const showDots = showTypingDots && isLast;
           return (
             <div key={b.id} className={rowClass(b.kind)}>
-              {showDots ? (
-                <TypingDots />
-              ) : (
-                <div className={bubbleClass(b.kind)}>
-                  {b.kind === "assistant" ? <Markdown text={b.text} /> : b.text}
-                </div>
-              )}
+              {/* Column so tool notes can sit above the bubble while the
+                  delete button stays beside the pair. */}
+              <div className="flex min-w-0 flex-col items-stretch">
+                {b.tools?.length ? <ToolNotes notes={b.tools} /> : null}
+                {showDots ? (
+                  <TypingDots />
+                ) : (
+                  <div className={bubbleClass(b.kind)}>
+                    {b.kind === "assistant" ? <Markdown text={b.text} /> : b.text}
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 className="flex flex-shrink-0 cursor-pointer items-center justify-center rounded-md p-1 text-ink-faint opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-surface-3 hover:text-danger-text"

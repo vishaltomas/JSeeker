@@ -114,6 +114,7 @@ export function startExtensionServer(): void {
         history,
         {
           delta: (text) => send("delta", text),
+          tool: (activity) => send("tool", activity),
           done: (full) => {
             // Recorded once the reply is whole, so History never shows a
             // half-streamed answer. Only pages the panel identified get a

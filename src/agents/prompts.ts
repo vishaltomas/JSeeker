@@ -7,7 +7,11 @@ import { RESUME_ANCHOR_KEYS } from "./types";
  * passed by the extension's in-page chat panel — with it the assistant can
  * answer about *this* posting ("does my background fit?", "draft an answer to
  * question 3") instead of being told about it second-hand. */
-export function buildSystemPrompt(store: Store, pageContext?: string): string {
+export function buildSystemPrompt(
+  store: Store,
+  pageContext?: string,
+  options: { tools?: boolean } = {}
+): string {
   const lines = Object.entries(store.data)
     .filter(([, value]) => value)
     .map(([key, value]) => `- ${key}: ${value}`);
@@ -20,6 +24,25 @@ export function buildSystemPrompt(store: Store, pageContext?: string): string {
     "The user's saved info:",
     profileText,
   ];
+
+  if (options.tools) {
+    prompt.push(
+      "",
+      // The block above is the flat key-value bag only — the user's actual
+      // work history lives in the structured resume, which `read_profile`
+      // returns and nothing else here does. Without this the model answers
+      // "write my resume" from a name and a job title, and fills the rest in
+      // from imagination.
+      "The list above is only the user's saved fields. Their work history, education,",
+      "skills and summary are not in it — call `read_profile` to read those. Do that",
+      "before writing a resume, a cover letter, or any answer about their background,",
+      "and never state experience you haven't read.",
+      "Use `read_web_page` whenever the user gives you a link, rather than guessing at",
+      "what the posting says. Tools that write — `write_resume`, `write_cover_letter`,",
+      "`update_profile` — change the user's own files and profile, so use them when",
+      "asked to, not speculatively."
+    );
+  }
 
   if (pageContext?.trim()) {
     prompt.push(

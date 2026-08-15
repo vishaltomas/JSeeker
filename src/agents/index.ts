@@ -121,7 +121,11 @@ ipcMain.handle(
 
 /** Streams a chat reply from whichever provider is configured into `sink` —
  * shared by the app's own chat panel (over IPC, below) and the browser
- * extension's in-page panel (over SSE, see main/extensionServer.ts). */
+ * extension's in-page panel (over SSE, see main/extensionServer.ts).
+ *
+ * Tools are on here: a conversation is where reading a posting, checking the
+ * profile or writing a document into the builder is what the user is asking
+ * for. See agents/toolDefs.ts for the list. */
 export async function streamChat(
   store: Store,
   history: ChatMessage[],
@@ -129,15 +133,20 @@ export async function streamChat(
   pageContext?: string
 ): Promise<void> {
   if (store.settings.provider === "claude") {
-    await chatWithClaude(sink, store, history, pageContext);
+    await chatWithClaude(sink, store, history, pageContext, { tools: true });
   } else {
-    await chatWithOllama(sink, store, history, pageContext);
+    await chatWithOllama(sink, store, history, pageContext, { tools: true });
   }
 }
 
 /** Streams a drafted document — the panel's "Cover letter" / "Tailor resume"
  * buttons. The posting rides in as page context exactly as it does for chat,
- * so the difference from a chat turn is only the instruction. */
+ * so the difference from a chat turn is only the instruction.
+ *
+ * Tools stay off. What this streams is downloaded as a file, and the prompt
+ * says to output the document and nothing else — a model that paused to call a
+ * tool would either break that contract or bury the call in the letter. The
+ * profile it needs is already in the prompt (see `buildApplicantBlock`). */
 export async function streamDocument(
   store: Store,
   kind: "cover-letter" | "resume",
@@ -146,9 +155,9 @@ export async function streamDocument(
 ): Promise<void> {
   const ask: ChatMessage[] = [{ role: "user", content: buildDocumentPrompt(store, kind) }];
   if (store.settings.provider === "claude") {
-    await chatWithClaude(sink, store, ask, posting);
+    await chatWithClaude(sink, store, ask, posting, { tools: false });
   } else {
-    await chatWithOllama(sink, store, ask, posting);
+    await chatWithOllama(sink, store, ask, posting, { tools: false });
   }
 }
 
@@ -181,5 +190,9 @@ ipcMain.on("chat:send", async (event, history: ChatMessage[]) => {
     delta: (text) => event.sender.send("chat:delta", text),
     done: (full) => event.sender.send("chat:done", full),
     error: (message) => event.sender.send("chat:error", message),
+    // Reaching for a tool is the one part of a reply that takes real time and
+    // leaves no trace in the text, so it gets its own channel to show under
+    // the message as it happens.
+    tool: (activity) => event.sender.send("chat:tool", activity),
   });
 });

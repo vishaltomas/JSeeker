@@ -120,6 +120,7 @@ async function streamFromApp(port, route, body) {
       }
 
       if (event === "delta") port.postMessage({ type: "delta", text: data });
+      else if (event === "tool") port.postMessage({ type: "tool", activity: data });
       else if (event === "error") port.postMessage({ type: "error", message: data });
       else if (event === "artifact") port.postMessage({ type: "artifact", artifact: data });
       else if (event === "done") port.postMessage({ type: "done" });

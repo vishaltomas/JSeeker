@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../types";
 
+/** One thing the assistant did while answering — read a page, wrote a
+ * document. Kept on the bubble after the turn finishes rather than cleared:
+ * "where did that resume go?" is a question the user asks later, and the
+ * answer is right here. */
+export interface ChatToolNote {
+  name: string;
+  detail: string;
+  status: "start" | "done" | "error";
+  message?: string;
+}
+
 export interface ChatBubble {
   id: number;
   kind: "user" | "assistant" | "error";
@@ -9,6 +20,8 @@ export interface ChatBubble {
    * the context sent for future turns (and of any role-alternation Claude
    * requires) since it was never actually answered. */
   excludeFromHistory?: boolean;
+  /** Tool calls made while producing this reply, in order. */
+  tools?: ChatToolNote[];
 }
 
 /** Rebuilds the API-facing history from whatever bubbles are still visible,
@@ -50,6 +63,34 @@ export function useChat() {
       streamingTextRef.current += text;
       const full = streamingTextRef.current;
       setBubbles((prev) => prev.map((b) => (b.id === id ? { ...b, text: full } : b)));
+    });
+
+    // A `start` adds a line; the matching `done`/`error` updates it in place,
+    // so a tool that is still running and one that finished are the same row
+    // in the list rather than two.
+    window.api.chat.onTool((activity) => {
+      const id = streamingIdRef.current;
+      if (id == null) return;
+      setBubbles((prev) =>
+        prev.map((b) => {
+          if (b.id !== id) return b;
+          const tools = b.tools ?? [];
+          if (activity.status === "start") return { ...b, tools: [...tools, activity] };
+
+          let last = -1;
+          for (let i = tools.length - 1; i >= 0; i--) {
+            if (tools[i].name === activity.name && tools[i].status === "start") {
+              last = i;
+              break;
+            }
+          }
+          if (last < 0) return { ...b, tools: [...tools, activity] };
+
+          const updated = [...tools];
+          updated[last] = { ...updated[last], ...activity };
+          return { ...b, tools: updated };
+        })
+      );
     });
 
     window.api.chat.onDone((full) => {

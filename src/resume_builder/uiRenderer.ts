@@ -1,7 +1,7 @@
 import { createElement, Fragment, ReactNode } from "react";
 import * as components from './ui/Components';
 import { ASTNode } from "./types";
-import { stringTag } from "yaml/util";
+import { BLOCK_ARGS, CELL_ARGS } from "./schema";
 
 const SPECIAL_IDENTIFIERS = [
     "macro",
@@ -15,69 +15,19 @@ const KEYWORDS = [
 
 /**
  * Maps the argument names written in `.resb` source to the component prop each
- * one sets — `Cell(fw: 200)` becomes `<Cell fontWeight={200} />`. Canonical prop
- * names map to themselves so both the short and long spelling are accepted,
- * which also makes this the allowlist of legal arguments per keyword: a name
- * absent from its keyword's table is not a valid parameter.
+ * one sets — `Cell(fw: 200)` becomes `<Cell fontWeight={200} />`.
+ *
+ * The tables come from schema.ts, which is where they live so the main process
+ * can read them without pulling JSX into its build (agents/tools.ts validates
+ * generated documents against them, agents/skills.ts documents them). Adopting
+ * them at this type is the check that every prop named there is a real one.
  */
 const KEYWORD_ARGS_MAPPING: {
     Cell: Record<string, keyof components.CellProps>;
     Block: Record<string, keyof components.BlockProps>;
 } = {
-    'Cell':{
-        // shorthand
-        'fw': 'fontWeight',
-        'fs': 'fontSize',
-        'fst': 'fontStyle',
-        'al': 'align',
-        'pd': 'padding',
-        'ps': 'paddingSize',
-        'txt': 'text',
-        'cls': 'className',
-        'ta': 'textAlign',
-        'mt': 'marginTop',
-        'mb': 'marginBottom',
-        // canonical spellings
-        'fontWeight': 'fontWeight',
-        'fontSize': 'fontSize',
-        'fontStyle': 'fontStyle',
-        'align': 'align',
-        'textAlign': 'textAlign',
-        'padding': 'padding',
-        'paddingSize': 'paddingSize',
-        'text': 'text',
-        'className': 'className',
-        'marginTop': 'marginTop',
-        'marginBottom': 'marginBottom',
-        'rule': 'rule',
-        'bullet': 'bullet',
-        'grow': 'grow',
-        'nowrap': 'nowrap',
-        'font': 'font',
-        'c': 'color',
-        'bg': 'background',
-        'color': 'color',
-        'background': 'background'
-    },
-    'Block':{
-        // `Block` takes its cells positionally; the rest are named args.
-        // `children` and `numChildren` are derived from the parsed args, so
-        // they are deliberately not settable from source.
-        'name': 'name',
-        'dir': 'direction',
-        'gap': 'gap',
-        'mt': 'marginTop',
-        'mb': 'marginBottom',
-        'direction': 'direction',
-        'spread': 'spread',
-        'marginTop': 'marginTop',
-        'marginBottom': 'marginBottom',
-        'font': 'font',
-        'c': 'color',
-        'bg': 'background',
-        'color': 'color',
-        'background': 'background'
-    }
+    'Cell': CELL_ARGS,
+    'Block': BLOCK_ARGS
 }
 
 

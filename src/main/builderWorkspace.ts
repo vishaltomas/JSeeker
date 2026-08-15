@@ -26,7 +26,7 @@ export interface WorkspaceListing {
   files: BuilderFile[];
 }
 
-const EXTENSION = ".resb";
+export const EXTENSION = ".resb";
 const DEFAULT_NAME = "resume";
 
 export function workspaceDir(): string {
@@ -38,8 +38,12 @@ export function workspaceDir(): string {
  * sitting directly in the workspace. The renderer only ever gets these paths
  * from `builder:list`, so anything that fails here is a bug or an attempt to
  * reach out of the folder — either way it doesn't get read or written.
+ *
+ * Exported for agents/tools.ts, which reaches the same folder on the agent's
+ * behalf: one guard both callers pass through, rather than a second copy of
+ * this reasoning that can drift out of step with it.
  */
-function inWorkspace(candidate: unknown): string | null {
+export function inWorkspace(candidate: unknown): string | null {
   if (typeof candidate !== "string" || !candidate) return null;
   const resolved = path.resolve(candidate);
   // Windows paths are case-insensitive, and a bookmark saved by an older
@@ -55,7 +59,7 @@ function inWorkspace(candidate: unknown): string | null {
 }
 
 /** Strips a picked file's name down to something safe to create here. */
-function safeStem(name: unknown): string {
+export function safeStem(name: unknown): string {
   const raw = typeof name === "string" ? path.basename(name) : "";
   const stem = raw
     .replace(new RegExp(`${EXTENSION}$`, "i"), "")
@@ -65,7 +69,7 @@ function safeStem(name: unknown): string {
 }
 
 /** `resume.resb`, or `resume-2.resb` if that's taken, and so on. */
-function freePath(stem: string): string {
+export function freePath(stem: string): string {
   const dir = workspaceDir();
   for (let n = 1; ; n++) {
     const candidate = path.join(dir, `${stem}${n === 1 ? "" : `-${n}`}${EXTENSION}`);
@@ -97,7 +101,7 @@ export function seedWorkspace(source?: string): string | null {
   return file;
 }
 
-function listFiles(): BuilderFile[] {
+export function listFiles(): BuilderFile[] {
   const dir = workspaceDir();
   let names: string[];
   try {

@@ -67,6 +67,16 @@ export interface Store {
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
+/** Something the assistant did mid-reply — read a page, wrote a document.
+ * `error` means the tool failed, not the turn: the model is told what went
+ * wrong and carries on, so it reads as narration rather than a failure. */
+export interface ToolActivity {
+  name: string;
+  detail: string;
+  status: "start" | "done" | "error";
+  message?: string;
+}
+
 export interface ResumeParseResult {
   fields: ProfileData;
   resume: StructuredResume;
@@ -230,6 +240,8 @@ export interface Api {
     onDelta: (cb: (text: string) => void) => void;
     onDone: (cb: (full: string) => void) => void;
     onError: (cb: (message: string) => void) => void;
+    /** Tool calls made while answering — see agents/toolDefs.ts. */
+    onTool: (cb: (activity: ToolActivity) => void) => void;
   };
 }
 

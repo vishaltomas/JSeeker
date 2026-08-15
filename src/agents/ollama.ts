@@ -3,9 +3,17 @@ import { spawn } from "child_process";
 import type { Store } from "../main/store";
 import { loadStore } from "../main/store";
 import { getMainWindow } from "../main/window";
-import type { ChatMessage, ChatSink, ExtraField, ProgressSink, ResumeExtraction } from "./types";
+import type {
+  ChatMessage,
+  ChatOptions,
+  ChatSink,
+  ExtraField,
+  ProgressSink,
+  ResumeExtraction,
+} from "./types";
 import { RESUME_ANCHOR_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
 import { ensureEmbedModel } from "./embeddings";
+import { createToolCache, MAX_TOOL_STEPS, ollamaTools, runReportedTool } from "./toolDefs";
 import {
   buildAnswerExtractionPrompt,
   buildResumeExtractionPrompt,
@@ -160,66 +168,190 @@ function friendlyOllamaError(err: unknown, host: string, model: string): string 
   return msg;
 }
 
+/** A turn in Ollama's chat format. Richer than `ChatMessage`: an assistant
+ * turn can carry tool calls, and a tool's result comes back as its own role. */
+interface OllamaMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: { function: { name: string; arguments: unknown } }[];
+  /** Which tool produced this result — newer Ollama matches it back to the
+   * call, older builds ignore the field. */
+  tool_name?: string;
+}
+
+/** Ollama hands arguments back already parsed, but a model that emitted them
+ *  as a JSON string still turns up that way often enough to be worth handling
+ *  rather than failing the call. */
+function toolArguments(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+/** Whether Ollama refused the request because the model has no tool support.
+ *  Small local models often don't, and the default here is a 3B one. */
+function isNoToolSupport(detail: string): boolean {
+  return /does not support tools|tools are not supported|unsupported.*tool/i.test(detail);
+}
+
+/** One `/api/chat` request, streamed. Text is relayed as it arrives; tool
+ *  calls are accumulated and returned once the response is complete. */
+async function streamOllamaTurn(
+  host: string,
+  body: unknown,
+  sink: ChatSink,
+  onText: (chunk: string) => void
+): Promise<{ content: string; toolCalls: { name: string; arguments: unknown }[] }> {
+  const res = await fetch(`${host}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "");
+    const error = new Error(`Ollama responded ${res.status}. ${detail}`.trim());
+    (error as Error & { detail?: string }).detail = detail;
+    throw error;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  const toolCalls: { name: string; arguments: unknown }[] = [];
+  const seenCalls = new Set<string>();
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let newline: number;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line) continue;
+
+      const obj = JSON.parse(line);
+      if (obj.error) throw new Error(obj.error);
+
+      const chunk: string = obj.message?.content ?? "";
+      if (chunk) {
+        content += chunk;
+        onText(chunk);
+      }
+      // Depending on the build, these arrive in their own chunk or attached
+      // to the last one — collecting across the whole stream covers both.
+      //
+      // Deduplicated because some builds repeat the completed message in the
+      // final `done` chunk, which would otherwise read as the model asking
+      // twice and run the tool twice. A model that genuinely emits the same
+      // call twice in one message collapses here too, which is right: one
+      // message asking for the identical thing twice is one request.
+      for (const call of obj.message?.tool_calls ?? []) {
+        const name = call?.function?.name;
+        if (typeof name !== "string") continue;
+        const args = toolArguments(call.function?.arguments);
+        const signature = `${name}:${JSON.stringify(args ?? null)}`;
+        if (seenCalls.has(signature)) continue;
+        seenCalls.add(signature);
+        toolCalls.push({ name, arguments: args });
+      }
+    }
+  }
+
+  return { content, toolCalls };
+}
+
 // Streamed chat via the local Ollama model: renderer sends the conversation,
 // we prepend a system prompt (seeded with the active profile), stream tokens
 // from Ollama's NDJSON response, and relay each chunk back.
+//
+// With tools on this runs as a loop — the model asks for a tool, the result
+// goes back as another turn, and it answers again. A local model may not
+// support tools at all, which Ollama reports as a 400 rather than a refusal;
+// that falls back to a plain conversation instead of failing the message.
 export async function chatWithOllama(
   sink: ChatSink,
   store: Store,
   history: ChatMessage[],
-  pageContext?: string
+  pageContext?: string,
+  options: ChatOptions = {}
 ): Promise<void> {
   const host = store.settings.ollamaHost || DEFAULT_HOST;
   const model = store.settings.ollamaModel || DEFAULT_MODEL;
+  let useTools = options.tools !== false;
 
-  const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt(store, pageContext) },
-    ...history,
+  const messages: OllamaMessage[] = [
+    { role: "system", content: buildSystemPrompt(store, pageContext, { tools: useTools }) },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
   ];
+  // One turn's worth of read results, so asking for the same page twice costs
+  // one fetch. Discarded when this call returns.
+  const cache = createToolCache();
 
   try {
-    const res = await fetch(`${host}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    let full = "";
+
+    for (let step = 0; ; step++) {
       // The extension's in-page panel can put a whole job posting in the
       // system prompt, which overflows Ollama's small default context and
-      // would silently drop the earliest messages.
-      body: JSON.stringify({
+      // would silently drop the earliest messages. Tool results are long
+      // enough to need the same headroom.
+      const request = {
         model,
         messages,
         stream: true,
-        options: { num_ctx: pageContext ? 16384 : 8192 },
-      }),
-    });
+        options: { num_ctx: pageContext || useTools ? 16384 : 8192 },
+        ...(useTools ? { tools: ollamaTools() } : {}),
+      };
 
-    if (!res.ok || !res.body) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(`Ollama responded ${res.status}. ${detail}`.trim());
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let full = "";
-
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      let newline: number;
-      while ((newline = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (!line) continue;
-
-        const obj = JSON.parse(line);
-        if (obj.error) throw new Error(obj.error);
-        const chunk: string = obj.message?.content ?? "";
-        if (chunk) {
+      let turn;
+      try {
+        turn = await streamOllamaTurn(host, request, sink, (chunk) => {
           full += chunk;
           sink.delta(chunk);
-        }
+        });
+      } catch (err) {
+        const detail = (err as Error & { detail?: string }).detail ?? "";
+        if (!useTools || !isNoToolSupport(detail)) throw err;
+        // The model can't call tools. Nothing has been streamed yet on this
+        // attempt, so dropping them and retrying is invisible to the user.
+        useTools = false;
+        messages[0] = {
+          role: "system",
+          content: buildSystemPrompt(store, pageContext, { tools: false }),
+        };
+        continue;
+      }
+
+      if (!turn.toolCalls.length) break;
+
+      messages.push({
+        role: "assistant",
+        content: turn.content,
+        tool_calls: turn.toolCalls.map((call) => ({
+          function: { name: call.name, arguments: call.arguments },
+        })),
+      });
+
+      for (const call of turn.toolCalls) {
+        const outcome = await runReportedTool(call.name, call.arguments, sink, cache);
+        messages.push({ role: "tool", content: outcome.content, tool_name: call.name });
+      }
+
+      if (step + 1 >= MAX_TOOL_STEPS) {
+        sink.tool?.({
+          name: "",
+          detail: `Stopped after ${MAX_TOOL_STEPS} tool steps`,
+          status: "error",
+          message: "The assistant kept reaching for tools without finishing an answer.",
+        });
+        break;
       }
     }
 

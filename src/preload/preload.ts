@@ -81,6 +81,13 @@ interface ApplicationSession {
   answers: { key: string; value: string; saved: boolean }[];
 }
 
+interface ToolActivity {
+  name: string;
+  detail: string;
+  status: "start" | "done" | "error";
+  message?: string;
+}
+
 type OllamaStatus =
   | { state: "starting" }
   | { state: "pulling"; model: string; percent: number; detail: string }
@@ -178,6 +185,11 @@ contextBridge.exposeInMainWorld("api", {
     },
     onError: (cb: (message: string) => void): void => {
       ipcRenderer.on("chat:error", (_event, message: string) => cb(message));
+    },
+    /** Tool calls the assistant makes mid-reply — reading a page, writing a
+     * document. See agents/toolDefs.ts for the list. */
+    onTool: (cb: (activity: ToolActivity) => void): void => {
+      ipcRenderer.on("chat:tool", (_event, activity: ToolActivity) => cb(activity));
     },
   },
 });
