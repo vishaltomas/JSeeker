@@ -128,10 +128,9 @@ export const TOOLS: ToolDefinition[] = [
         name: "search_applications",
         readOnly: true,
         description:
-            "Search past job applications — the postings, the conversations held about them, and " +
-            "the answers extracted from those conversations. Use it when the applicant refers to " +
-            "a job they applied for, or when an answer they have already worked out would save " +
-            "writing a new one.",
+            "Search past job applications — the postings, and the conversations held about them " +
+            "in the browser extension. Use it when the applicant refers to a job they applied " +
+            "for, or when something they have already worked out would save writing it again.",
         schema: {
             type: "object",
             properties: {
@@ -151,8 +150,8 @@ export const TOOLS: ToolDefinition[] = [
         name: "read_application",
         readOnly: true,
         description:
-            "Read one past application in full — every message and every answer given. Get the " +
-            "id from search_applications first.",
+            "Read one past application in full — every message, and every document drafted for " +
+            "it. Get the id from search_applications first.",
         schema: {
             type: "object",
             properties: { id: { type: "string" } },
@@ -350,6 +349,10 @@ export interface ToolOutcome {
      *  that doesn't exist can list the documents and try again, which is a
      *  better outcome than the conversation stopping. */
     isError: boolean;
+    /** Set by the tools that write a document, from the `path` in their own
+     *  result. Not for the model — it already has the path in `content` — but
+     *  for the UI, which wants to open the file rather than describe it. */
+    path?: string;
 }
 
 function asText(value: unknown): string {
@@ -381,12 +384,17 @@ export async function runTool(name: string, input: unknown): Promise<ToolOutcome
     try {
         const result = await tool.run(args);
         const text = asText(result);
+        const written =
+            result && typeof result === "object"
+                ? (result as { path?: unknown }).path
+                : undefined;
         return {
             content:
                 text.length > MAX_RESULT_CHARS
                     ? `${text.slice(0, MAX_RESULT_CHARS)}\n…[truncated]`
                     : text,
             isError: false,
+            path: typeof written === "string" ? written : undefined,
         };
     } catch (err) {
         return { content: err instanceof Error ? err.message : String(err), isError: true };
@@ -470,7 +478,7 @@ export async function runReportedTool(
     sink.tool?.(
         outcome.isError
             ? { name, detail, status: "error", message: outcome.content }
-            : { name, detail, status: "done" }
+            : { name, detail, status: "done", path: outcome.path }
     );
 
     // Failures aren't cached — a site that timed out may answer on a retry,

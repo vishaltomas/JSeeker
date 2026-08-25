@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Save,
   SaveOff,
+  Sparkles,
   Trash2,
   TriangleAlert,
   Zap,
@@ -36,6 +37,7 @@ import {
 } from "../../resume_builder/sections";
 import type { BuilderFile, Store } from "../types";
 import { BUILDER_DOCS } from "./builderDocs";
+import { ChatDock } from "./builder/ChatDock";
 import { Markdown } from "./Markdown";
 import { cx, viewSection } from "../ui";
 
@@ -67,10 +69,15 @@ const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2];
  * document pixels — the page floats rather than butting up against the edge. */
 const PAGE_GUTTER_PX = 24;
 
-/** Header strip above each pane. Fixed height so the three line up despite
- * carrying different controls. */
+/** Header strip above each pane. Fixed height so the four line up despite
+ * carrying different controls.
+ *
+ * It scrolls sideways rather than clipping: the row is four panes wide now,
+ * and a control that has quietly fallen off the end of a toolbar is a control
+ * the user cannot reach at all. The scrollbar itself is hidden — a 30px strip
+ * has no room for one, and everything in here is reachable by keyboard too. */
 const paneHeader =
-  "flex h-[30px] flex-shrink-0 items-center gap-1 border-b border-line-subtle bg-surface-1 px-2 text-[11px] uppercase tracking-wide text-ink-muted";
+  "flex h-[30px] flex-shrink-0 items-center gap-1 overflow-x-auto border-b border-line-subtle bg-surface-1 px-2 text-[11px] uppercase tracking-wide text-ink-muted [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
 const headerBtn =
   "flex flex-shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-ink-soft enabled:hover:bg-surface-3 enabled:hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
@@ -122,6 +129,12 @@ function suggestedName(main: string): string | undefined {
 const MIN_EXPLORER_PX = 130;
 const MIN_PANE_SHARE = 0.15;
 
+/** The assistant dock keeps a pixel width for the same reason the file list
+ * does: a column of chat bubbles has a width it wants, and it isn't a
+ * fraction of the window. */
+const MIN_CHAT_PX = 240;
+const DEFAULT_CHAT_PX = 320;
+
 /**
  * Draggable divider between two panes.
  *
@@ -167,6 +180,92 @@ function PaneDivider({
   );
 }
 
+/**
+ * Typeface and accent, behind one button.
+ *
+ * They were two inline selects until the assistant joined the row: four panes
+ * on a 1280px window leaves the preview's toolbar about 400px, and the two
+ * pickers alone were most of it — Compile stayed put while Export quietly fell
+ * off the end. Folded into a popover they cost one 30px button, and get more
+ * room to read than they had inline.
+ */
+function StylePicker({
+  font,
+  accent,
+  onFont,
+  onAccent,
+}: {
+  font: string;
+  accent: string;
+  onFont: (id: string) => void;
+  onAccent: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // A menu that outlives the click that dismissed it is worse than no menu.
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [open]);
+
+  return (
+    <div className="relative flex-shrink-0" onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        className={cx(headerBtn, open && "bg-surface-3 text-white")}
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        title="Typeface and accent colour"
+      >
+        <span
+          aria-hidden
+          className="h-3 w-3 flex-shrink-0 rounded-full border border-line-input"
+          style={{ background: accentHex(accent) }}
+        />
+        <span className="normal-case tracking-normal">Style</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 w-[190px] rounded-md border border-line bg-surface-2 p-2.5 shadow-lg">
+          <label className="mb-1 block text-[10.5px] normal-case tracking-normal text-ink-faint">
+            Typeface
+          </label>
+          <select
+            className="mb-2.5 w-full cursor-pointer rounded-md border border-line-input bg-surface-0 px-1.5 py-1 text-[11.5px] normal-case tracking-normal text-ink-soft outline-none focus:border-accent"
+            value={font}
+            onChange={(e) => onFont(e.target.value)}
+          >
+            {FONTS.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+
+          <label
+            className="mb-1 block text-[10.5px] normal-case tracking-normal text-ink-faint"
+            title="Used wherever the source says color : 'accent'"
+          >
+            Accent
+          </label>
+          <select
+            className="w-full cursor-pointer rounded-md border border-line-input bg-surface-0 px-1.5 py-1 text-[11.5px] normal-case tracking-normal text-ink-soft outline-none focus:border-accent"
+            value={accent}
+            onChange={(e) => onAccent(e.target.value)}
+          >
+            {ACCENTS.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function tabClass(active: boolean): string {
   return cx(
     "h-full cursor-pointer border-b-2 px-3",
@@ -188,8 +287,8 @@ function docsTabClass(active: boolean): string {
 
 /**
  * Editor for the `.resb` resume language: the workspace's documents on the
- * left, the open one's source in the middle, the compiled document on the
- * right.
+ * left, the open one's source next to them, the compiled document beside that,
+ * and the assistant docked on the far right.
  *
  * Documents are files in the app's data folder (see main/builderWorkspace.ts),
  * and the source is edited as two tabs because a `.resb` file is always the
@@ -198,6 +297,11 @@ function docsTabClass(active: boolean): string {
  * The preview is an iframe fed a complete HTML document rather than React
  * rendered inline, so the resume's styling and the app's stylesheet cannot
  * reach each other — and the same string is what the PDF export renders.
+ *
+ * The assistant is in the same row rather than a screen of its own because a
+ * resume is written by going back and forth: ask for a draft, watch it compile,
+ * fix the line that reads badly. It is handed the open document as context and
+ * writes its own into the workspace, so both halves of that loop stay here.
  */
 export function BuilderView({ visible, store, persist }: BuilderViewProps) {
   const [files, setFiles] = useState<BuilderFile[]>([]);
@@ -536,9 +640,21 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
   useEffect(() => {
     const el = paneRef.current;
     if (!el) return;
-    const observer = new ResizeObserver(([entry]) =>
-      setPane({ width: entry.contentRect.width, height: entry.contentRect.height })
-    );
+    // Measured up front as well as observed. The observer reports every later
+    // change, but its first callback is not something to depend on for the
+    // initial size — when it lands before the row has been laid out it reports
+    // zero, and a pane that never changes size again is never corrected. A
+    // zero-width pane renders a zero-width iframe: a blank preview, and a zoom
+    // readout stuck at 100%.
+    const measure = () => {
+      const box = el.getBoundingClientRect();
+      if (box.width) setPane({ width: box.width, height: box.height });
+    };
+    measure();
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width) setPane({ width, height });
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -609,8 +725,11 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
   // by grow ratio, so the split holds as the window resizes.
   const rowRef = useRef<HTMLDivElement>(null);
   const [explorerWidth, setExplorerWidth] = useState(208);
+  const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_PX);
   const [editorShare, setEditorShare] = useState(0.5);
   const [resizing, setResizing] = useState(false);
+
+  const chatOpen = store.builderChatOpen;
 
   function resizeExplorer(clientX: number) {
     const row = rowRef.current?.getBoundingClientRect();
@@ -622,10 +741,39 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
   function resizeEditor(clientX: number) {
     const row = rowRef.current?.getBoundingClientRect();
     if (!row) return;
-    const available = row.width - explorerWidth;
+    const available = row.width - explorerWidth - (chatOpen ? chatWidth : 0);
     if (available <= 0) return;
     const share = (clientX - row.left - explorerWidth) / available;
     setEditorShare(Math.min(Math.max(share, MIN_PANE_SHARE), 1 - MIN_PANE_SHARE));
+  }
+
+  /** Dragged from the dock's left edge, so the width grows as the pointer
+   * moves left — the mirror image of the other two dividers. */
+  function resizeChat(clientX: number) {
+    const row = rowRef.current?.getBoundingClientRect();
+    if (!row) return;
+    const max = Math.max(MIN_CHAT_PX, row.width * 0.45);
+    setChatWidth(Math.min(Math.max(row.right - clientX, MIN_CHAT_PX), max));
+  }
+
+  /** The assistant has written a document into the workspace. Re-read the
+   * folder so it appears in the list, and open it — the model was asked for a
+   * document, and a document you have to go and find is half an answer.
+   *
+   * An unsaved edit in the outgoing document is `open`'s problem, and it
+   * already handles it (autosave flushes, otherwise it asks). */
+  const openWritten = useCallback(
+    async (writtenPath?: string) => {
+      const listed = await refresh();
+      if (!writtenPath) return;
+      const written = listed.find((f) => f.path === writtenPath);
+      if (written) await open(written.path);
+    },
+    [refresh, open]
+  );
+
+  function toggleChat() {
+    persist({ ...store, builderChatOpen: !chatOpen });
   }
 
   /** The editor has moved on from what the preview is showing. */
@@ -961,36 +1109,12 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
             >
               {autoCompileOn ? <Zap size={13} /> : <ZapOff size={13} />}
             </button>
-            <select
-              className="ml-1 max-w-[130px] cursor-pointer truncate rounded-md border border-line-input bg-surface-0 px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-ink-soft outline-none hover:text-white focus:border-accent"
-              value={store.builderFont}
-              onChange={(e) => chooseFont(e.target.value)}
-              title="Typeface the resume is set in"
-            >
-              {FONTS.map((font) => (
-                <option key={font.id} value={font.id}>
-                  {font.label}
-                </option>
-              ))}
-            </select>
-            <label className="flex flex-shrink-0 items-center gap-1" title="Accent colour, used wherever the source says color : 'accent'">
-              <span
-                aria-hidden
-                className="h-3 w-3 flex-shrink-0 rounded-full border border-line-input"
-                style={{ background: accentHex(store.builderAccent) }}
-              />
-              <select
-                className="max-w-[110px] cursor-pointer truncate rounded-md border border-line-input bg-surface-0 px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-ink-soft outline-none hover:text-white focus:border-accent"
-                value={store.builderAccent}
-                onChange={(e) => chooseAccent(e.target.value)}
-              >
-                {ACCENTS.map((accent) => (
-                  <option key={accent.id} value={accent.id}>
-                    {accent.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <StylePicker
+              font={store.builderFont}
+              accent={store.builderAccent}
+              onFont={chooseFont}
+              onAccent={chooseAccent}
+            />
             <span className="flex-1" />
             <button
               className={headerBtn}
@@ -1017,7 +1141,6 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
             >
               <ZoomIn size={13} />
             </button>
-            <span className="flex-1" />
             {exportStatus && (
               <span className="truncate normal-case tracking-normal" title={exportStatus}>
                 {exportStatus}
@@ -1031,6 +1154,14 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
             >
               <Download size={13} />
               {exporting ? "Saving…" : "PDF"}
+            </button>
+            <button
+              className={cx(headerBtn, chatOpen && "text-accent-light")}
+              onClick={toggleChat}
+              aria-pressed={chatOpen}
+              title={chatOpen ? "Hide the assistant" : "Ask the assistant about this document"}
+            >
+              <Sparkles size={13} />
             </button>
           </div>
 
@@ -1070,6 +1201,27 @@ export function BuilderView({ visible, store, persist }: BuilderViewProps) {
             />
           </div>
         </div>
+
+        {/* The dock is unmounted when hidden rather than kept behind `hidden`,
+            unlike the top-level views: a conversation is worth losing far less
+            than a screenful of draft edits, and an open document streamed into
+            a chat nobody can see is work done for nothing. */}
+        {chatOpen && (
+          <>
+            <PaneDivider onMove={resizeChat} onDragging={setResizing} />
+            <div
+              className="flex min-h-0 flex-shrink-0 flex-col"
+              style={{ width: chatWidth }}
+            >
+              <ChatDock
+                documentName={openName}
+                source={source}
+                onDocumentsChanged={(writtenPath) => void openWritten(writtenPath)}
+                onClose={toggleChat}
+              />
+            </div>
+          </>
+        )}
       </div>
     </section>
   );

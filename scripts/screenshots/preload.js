@@ -113,57 +113,10 @@ const STORE = {
   builderFilePath: "/workspace/alex-morgan.resb",
   builderAutosave: true,
   builderAutoCompile: true,
+  builderChatOpen: true,
   builderFont: "inter",
   builderAccent: "violet",
 };
-
-const SESSIONS = [
-  {
-    id: "s1",
-    url: "https://careers.northwind.example/jobs/mobile-engineer",
-    host: "careers.northwind.example",
-    title: "Mobile Engineer — Northwind",
-    startedAt: now - 2 * hour,
-    updatedAt: now - hour,
-    messages: [
-      { role: "user", content: "Does my background fit this posting?", at: now - 2 * hour },
-      {
-        role: "assistant",
-        content:
-          "Closely. They ask for React Native and a design-system background — you have four years of component-library work, which is the harder half.",
-        at: now - 2 * hour + 4000,
-      },
-    ],
-    artifacts: [
-      {
-        id: "a1",
-        kind: "cover-letter",
-        content:
-          "Dear Hiring Team,\n\nI have spent the last four years building the component library behind Northwind's...",
-        createdAt: now - hour,
-      },
-    ],
-    answers: [
-      { key: "Notice period", value: "30 days", saved: true },
-      { key: "Expected salary", value: "RM 9,000 – 11,000", saved: false },
-    ],
-  },
-  {
-    id: "s2",
-    url: "https://jobs.pilcrow.example/frontend",
-    host: "jobs.pilcrow.example",
-    title: "Senior Frontend Engineer — Pilcrow",
-    startedAt: now - 30 * hour,
-    updatedAt: now - 29 * hour,
-    messages: [
-      { role: "user", content: "Draft an answer to their question 3.", at: now - 30 * hour },
-    ],
-    artifacts: [
-      { id: "a2", kind: "resume", content: "# Alex Morgan\n\nTailored for Pilcrow...", createdAt: now - 29 * hour },
-    ],
-    answers: [],
-  },
-];
 
 const REPLY =
   "Yes — your Northwind work lines up with most of it. They want a design-system background and someone comfortable owning a desktop client, and that is two of your three most recent projects.\n\nThe gap is React Native: the posting lists it first. I would lead the cover letter with the offline-first editor, which is the closest thing you have to shipping on a constrained client.";
@@ -195,12 +148,6 @@ contextBridge.exposeInMainWorld("api", {
     remove: () => Promise.resolve({ ok: true }),
     pick: () => Promise.resolve({ canceled: true }),
   },
-  sessions: {
-    list: () => Promise.resolve(SESSIONS),
-    remove: () => Promise.resolve(SESSIONS),
-    extractAnswers: () => Promise.resolve({ answers: [] }),
-    markAnswersSaved: () => Promise.resolve(SESSIONS),
-  },
   exportPdf: () => Promise.resolve({ ok: true, filePath: "/home/alex/alex-morgan.pdf" }),
   extensionInfo: () => Promise.resolve({ port: 43117, listening: true }),
   openExternal: () => Promise.resolve(true),
@@ -230,5 +177,6 @@ contextBridge.exposeInMainWorld("api", {
       onDone = cb;
     },
     onError: () => {},
+    onTool: () => {},
   },
 });

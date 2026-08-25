@@ -1,9 +1,10 @@
-// Drives the built renderer with stubbed data and captures a PNG per view.
+// Drives the built renderer with stubbed data and captures a PNG per view —
+// the editor (with the assistant docked beside it) and the profile.
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
-const REPO = path.resolve(__dirname, "..");
+const REPO = path.resolve(__dirname, "..", "..");
 const OUT = path.join(REPO, "docs", "screenshots");
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -20,10 +21,21 @@ const clickJs = (selector, text) => `
   })()
 `;
 
+/** Captures the window, retrying while the frame comes back empty — the first
+ *  capture after a load lands before the compositor has painted often enough
+ *  to matter, and an empty capture writes a 0-byte PNG rather than failing. */
 async function shot(win, name) {
-  const image = await win.webContents.capturePage();
-  fs.writeFileSync(path.join(OUT, `${name}.png`), image.toPNG());
-  console.log("wrote", name);
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const image = await win.webContents.capturePage();
+    const png = image.isEmpty() ? Buffer.alloc(0) : image.toPNG();
+    if (png.length) {
+      fs.writeFileSync(path.join(OUT, `${name}.png`), png);
+      console.log("wrote", name);
+      return;
+    }
+    await wait(500);
+  }
+  throw new Error(`capture of ${name} came back empty five times`);
 }
 
 app.whenReady().then(async () => {
@@ -38,52 +50,36 @@ app.whenReady().then(async () => {
   });
 
   await win.loadFile(path.join(REPO, "dist/renderer/index.html"));
-  // Long enough for the landing entrance to settle.
+  // The app opens on the editor. Long enough for the workspace listing, the
+  // first compile and the preview iframe to settle.
   await wait(3000);
-  await shot(win, "landing");
 
-  // The capability showcase. The window grows for this one so the whole row
-  // fits without a scrollbar down the side of the shot.
-  console.log(await win.webContents.executeJavaScript(clickJs("button", "What I can do")));
-  win.setContentSize(1280, 930);
-  await wait(1500);
-  await shot(win, "capabilities");
-  win.setContentSize(1280, 860);
-  await wait(500);
+  // Ask the assistant something about the document on screen — the shot is of
+  // the editor working, not of an editor sitting idle. The value is set and
+  // submitted in two steps because React has to render the controlled input
+  // before the form's submit button stops being disabled.
+  await win.webContents.executeJavaScript(`
+    (() => {
+      const box = document.querySelector('textarea[placeholder="Ask about this document…"]');
+      if (!box) return "no chat box";
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      setter.call(box, "Tighten the Northwind bullets — same facts, fewer words.");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      return "typed";
+    })()
+  `).then(console.log);
+  await wait(400);
+  await win.webContents
+    .executeJavaScript(clickJs('button[title="Send (Enter)"]'))
+    .then(console.log);
+  await wait(2500);
+  await shot(win, "editor");
 
   console.log(await win.webContents.executeJavaScript(clickJs("header button", "Profile")));
   await wait(600);
   console.log(await win.webContents.executeJavaScript(clickJs("button", "Work experience")));
   await wait(900);
   await shot(win, "profile");
-
-  console.log(await win.webContents.executeJavaScript(clickJs("header button", "Chat")));
-  await wait(600);
-  await win.webContents.executeJavaScript(`
-    (() => {
-      const input = document.querySelector('input[placeholder="Message"]');
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-      setter.call(input, "I'm looking at a mobile engineer role at Northwind — does my background fit?");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.closest("form").requestSubmit();
-      return "sent";
-    })()
-  `);
-  await wait(2500);
-  await shot(win, "chat");
-
-  console.log(await win.webContents.executeJavaScript(clickJs("header button", "Builder")));
-  await wait(2500);
-  await shot(win, "builder");
-
-  console.log(await win.webContents.executeJavaScript(clickJs("header button", "History")));
-  await wait(900);
-  // The session row is a clickable div, not a button.
-  console.log(
-    await win.webContents.executeJavaScript(clickJs("li div.cursor-pointer", "Mobile Engineer"))
-  );
-  await wait(900);
-  await shot(win, "history");
 
   app.quit();
 });

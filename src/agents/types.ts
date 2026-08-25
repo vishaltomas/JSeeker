@@ -13,6 +13,10 @@ export interface ToolActivity {
   /** Set when `status` is `"error"`. The turn continues — the model is told
    * what went wrong and gets to react — so this is narration, not a failure. */
   message?: string;
+  /** Where a tool that wrote a document put it. The editor's assistant dock
+   * uses this to open what was just written, instead of leaving the user to
+   * find it in the file list themselves. */
+  path?: string;
 }
 
 /** Where a streamed chat reply goes. The app's own chat sends it over IPC to

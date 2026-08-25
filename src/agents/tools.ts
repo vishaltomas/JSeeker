@@ -30,7 +30,7 @@ import { PDFParse } from "pdf-parse";
 
 import type { ProfileData, StructuredResume } from "../main/store";
 import { loadStore, saveStore } from "../main/store";
-import type { ApplicationSession, SessionAnswer } from "../main/sessions";
+import type { ApplicationSession } from "../main/sessions";
 import { getSession, listSessions } from "../main/sessions";
 import type { BuilderFile } from "../main/builderWorkspace";
 import {
@@ -148,7 +148,6 @@ export interface SessionSummary {
     updatedAt: number;
     messageCount: number;
     artifactCount: number;
-    answers: SessionAnswer[];
 }
 
 function summarize(session: ApplicationSession): SessionSummary {
@@ -161,7 +160,6 @@ function summarize(session: ApplicationSession): SessionSummary {
         updatedAt: session.updatedAt,
         messageCount: session.messages.length,
         artifactCount: session.artifacts.length,
-        answers: session.answers,
     };
 }
 
@@ -179,7 +177,7 @@ export function ReadSessions(limit = 25): SessionSummary[] {
         .map(summarize);
 }
 
-/** One application in full — every message, artifact and extracted answer. */
+/** One application in full — every message and every artifact. */
 export function ReadSession(id: string): ApplicationSession {
     const session = getSession(id);
     if (!session) throw new ToolError(`${ReadSession.name} : no session with id ${id}.`);
@@ -189,11 +187,10 @@ export function ReadSession(id: string): ApplicationSession {
 /**
  * Finds past applications matching `query`.
  *
- * Searches the posting's title, host and URL, then the conversation and the
- * answers extracted from it — so "notice period" finds the application where
- * that came up, and "stripe" finds the one at Stripe. Plain
- * case-insensitive substring matching: this is a lookup over a few hundred
- * records, not a search engine.
+ * Searches the posting's title, host and URL, then the conversation itself —
+ * so "notice period" finds the application where that came up, and "stripe"
+ * finds the one at Stripe. Plain case-insensitive substring matching: this is
+ * a lookup over a few hundred records, not a search engine.
  */
 export function SearchSessions(query: string, limit = 10): SessionSummary[] {
     const needle = query.trim().toLowerCase();
@@ -206,7 +203,6 @@ export function SearchSessions(query: string, limit = 10): SessionSummary[] {
                 session.host,
                 session.url,
                 ...session.messages.map((m) => m.content),
-                ...session.answers.flatMap((a) => [a.key, a.value]),
             ];
             return haystack.some((text) => text.toLowerCase().includes(needle));
         })

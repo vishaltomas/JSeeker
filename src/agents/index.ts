@@ -3,12 +3,11 @@ import { randomUUID } from "crypto";
 import * as path from "path";
 import type { Store, StructuredResume } from "../main/store";
 import { emptyStructuredResume, loadStore } from "../main/store";
-import type { ChatMessage, ChatSink, ExtraField, ProgressSink, ResumeFields } from "./types";
-import { chatWithOllama, extractAnswersWithOllama, parseResumeWithOllama } from "./ollama";
-import { chatWithClaude, extractAnswersWithClaude, parseResumeWithClaude } from "./claude";
+import type { ChatMessage, ChatSink, ProgressSink, ResumeFields } from "./types";
+import { chatWithOllama, parseResumeWithOllama } from "./ollama";
+import { chatWithClaude, parseResumeWithClaude } from "./claude";
 import { extractPdfText } from "./resumeExtract";
 import { buildDocumentPrompt } from "./prompts";
-import { getSession, setAnswers } from "../main/sessions";
 import { DEFAULT_EMBED_MODEL } from "./embeddings";
 import { reconcileProfile, type MergeResult } from "./reconcile";
 import { DEFAULT_HOST } from "./ollama";
@@ -161,32 +160,11 @@ export async function streamDocument(
   }
 }
 
-/** Pulls reusable answers out of one session's conversation (see
- * main/sessions.ts) — the History view asks for this on demand, and the user
- * reviews the result before any of it reaches their profile. */
-ipcMain.handle(
-  "sessions:extractAnswers",
-  async (_event, id: string): Promise<{ answers: ExtraField[]; error?: string }> => {
-    const session = getSession(id);
-    if (!session) return { answers: [], error: "That session no longer exists." };
-    if (!session.messages.length) return { answers: [] };
-
-    try {
-      const store = loadStore();
-      const answers =
-        store.settings.provider === "claude"
-          ? await extractAnswersWithClaude(store, session.messages)
-          : await extractAnswersWithOllama(store, session.messages);
-      setAnswers(id, answers);
-      return { answers };
-    } catch (err) {
-      return { answers: [], error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-);
-
-ipcMain.on("chat:send", async (event, history: ChatMessage[]) => {
-  await streamChat(loadStore(), history, {
+// `context` is whatever the caller wants the reply grounded in — the source
+// of the document open in the editor, for the app's own dock. The extension
+// passes the job posting down the same parameter over HTTP.
+ipcMain.on("chat:send", async (event, args: { history: ChatMessage[]; context?: string }) => {
+  await streamChat(loadStore(), args.history ?? [], {
     delta: (text) => event.sender.send("chat:delta", text),
     done: (full) => event.sender.send("chat:done", full),
     error: (message) => event.sender.send("chat:error", message),
@@ -194,5 +172,5 @@ ipcMain.on("chat:send", async (event, history: ChatMessage[]) => {
     // leaves no trace in the text, so it gets its own channel to show under
     // the message as it happens.
     tool: (activity) => event.sender.send("chat:tool", activity),
-  });
+  }, args.context);
 });

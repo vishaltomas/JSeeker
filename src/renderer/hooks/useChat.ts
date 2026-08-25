@@ -10,6 +10,8 @@ export interface ChatToolNote {
   detail: string;
   status: "start" | "done" | "error";
   message?: string;
+  /** Where a tool that wrote a document put it — see agents/toolDefs.ts. */
+  path?: string;
 }
 
 export interface ChatBubble {
@@ -37,10 +39,19 @@ function toHistory(bubbles: ChatBubble[]): ChatMessage[] {
 }
 
 /** Chat state and streaming wiring for the assistant panel. Registers the
- * IPC listeners exactly once (they're process-wide event subscriptions). */
-export function useChat() {
+ * IPC listeners exactly once (they're process-wide event subscriptions).
+ *
+ * `onTool` is called for every tool the assistant reports, so a host that
+ * cares what it did — the editor's dock, which has to re-read the workspace
+ * once a document has been written into it — can react without reaching into
+ * the bubbles. Read from a ref so the listeners keep working after a re-render
+ * hands us a new closure. */
+export function useChat(onTool?: (activity: ChatToolNote) => void) {
   const [bubbles, setBubbles] = useState<ChatBubble[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+
+  const onToolRef = useRef(onTool);
+  onToolRef.current = onTool;
 
   const bubblesRef = useRef<ChatBubble[]>([]);
   useEffect(() => {
@@ -69,6 +80,7 @@ export function useChat() {
     // so a tool that is still running and one that finished are the same row
     // in the list rather than two.
     window.api.chat.onTool((activity) => {
+      onToolRef.current?.(activity);
       const id = streamingIdRef.current;
       if (id == null) return;
       setBubbles((prev) =>
@@ -124,7 +136,10 @@ export function useChat() {
     });
   }, []);
 
-  function send(text: string): void {
+  /** `context` is what the reply should be grounded in — the document open in
+   * the editor. Passed per-send rather than held here because it changes with
+   * every keystroke in the editor, and only the turn being sent needs it. */
+  function send(text: string, context?: string): void {
     if (!text.trim() || isStreaming) return;
 
     const userBubble: ChatBubble = { id: nextId.current++, kind: "user", text };
@@ -135,7 +150,7 @@ export function useChat() {
     setBubbles((prev) => [...prev, userBubble, { id: streamId, kind: "assistant", text: "…" }]);
     setStreaming(streamId);
 
-    window.api.chat.send(historyToSend);
+    window.api.chat.send(historyToSend, context);
   }
 
   function deleteMessage(id: number): void {

@@ -55,6 +55,8 @@ export interface Store {
   /** Which `.resb` document the builder had open, as a path inside the
    * workspace folder. The document lives in that file; this is a bookmark. */
   builderFilePath: string;
+  /** Whether the editor's assistant dock is open. */
+  builderChatOpen: boolean;
   /** Whether the builder writes edits back on its own; off means Save/Ctrl+S. */
   builderAutosave: boolean;
   /** Whether the preview recompiles as you type; off means Compile/Ctrl+Enter. */
@@ -75,6 +77,8 @@ export interface ToolActivity {
   detail: string;
   status: "start" | "done" | "error";
   message?: string;
+  /** Where a tool that wrote a document put it — see agents/toolDefs.ts. */
+  path?: string;
 }
 
 export interface ResumeParseResult {
@@ -154,43 +158,6 @@ export type OllamaStatus =
   | { state: "error"; message: string };
 
 
-/** One application session recorded by the browser extension — see
- * main/sessions.ts. Everything said on one job posting, plus what it
- * produced. */
-export interface SessionMessage {
-  role: "user" | "assistant";
-  content: string;
-  at: number;
-}
-
-export interface SessionArtifact {
-  id: string;
-  kind: "cover-letter" | "resume";
-  content: string;
-  createdAt: number;
-}
-
-/** A question this application asked and the answer given, harvested from the
- * conversation so it can be reused on the next one. */
-export interface SessionAnswer {
-  key: string;
-  value: string;
-  /** Whether the user has accepted it into their profile. */
-  saved: boolean;
-}
-
-export interface ApplicationSession {
-  id: string;
-  url: string;
-  host: string;
-  title: string;
-  startedAt: number;
-  updatedAt: number;
-  messages: SessionMessage[];
-  artifacts: SessionArtifact[];
-  answers: SessionAnswer[];
-}
-
 export interface Api {
   versions: { node: string; chrome: string; electron: string };
   loadStore: () => Promise<Store>;
@@ -217,15 +184,6 @@ export interface Api {
     /** Reads a `.resb` file from anywhere on disk, without importing it. */
     pick: () => Promise<{ canceled?: boolean; name?: string; content?: string; error?: string }>;
   };
-  /** Application sessions recorded by the extension — see main/sessions.ts. */
-  sessions: {
-    list: () => Promise<ApplicationSession[]>;
-    remove: (id: string) => Promise<ApplicationSession[]>;
-    /** Asks the model to pull reusable answers out of one session's
-     * conversation. Slow on a local model; the History view asks on demand. */
-    extractAnswers: (id: string) => Promise<{ answers: { key: string; value: string }[]; error?: string }>;
-    markAnswersSaved: (id: string, keys: string[]) => Promise<ApplicationSession[]>;
-  };
   /** Renders a compiled resume document to PDF, prompting for a location. */
   exportPdf: (html: string, name?: string) => Promise<PdfExportResult>;
   /** Whether the local server the browser extension's chat panel talks to is up. */
@@ -236,7 +194,9 @@ export interface Api {
   getOllamaStatus: () => Promise<OllamaStatus | null>;
   startOllama: () => Promise<void>;
   chat: {
-    send: (history: ChatMessage[]) => void;
+    /** `context` is the source of the document open in the editor, when there
+     * is one — the same channel the extension uses for the page it's on. */
+    send: (history: ChatMessage[], context?: string) => void;
     onDelta: (cb: (text: string) => void) => void;
     onDone: (cb: (full: string) => void) => void;
     onError: (cb: (message: string) => void) => void;

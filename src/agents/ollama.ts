@@ -7,7 +7,6 @@ import type {
   ChatMessage,
   ChatOptions,
   ChatSink,
-  ExtraField,
   ProgressSink,
   ResumeExtraction,
 } from "./types";
@@ -15,10 +14,8 @@ import { RESUME_ANCHOR_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROP
 import { ensureEmbedModel } from "./embeddings";
 import { createToolCache, MAX_TOOL_STEPS, ollamaTools, runReportedTool } from "./toolDefs";
 import {
-  buildAnswerExtractionPrompt,
   buildResumeExtractionPrompt,
   buildSystemPrompt,
-  parseExtractedAnswers,
   parseResumeExtraction,
 } from "./prompts";
 
@@ -104,56 +101,6 @@ export async function parseResumeWithOllama(
   }
 
   return parseResumeExtraction(content);
-}
-
-/** Reusable answers pulled out of one application session — a flat list of
- * key/value pairs, the same shape the profile bag already stores. */
-const ANSWERS_SCHEMA = {
-  type: "object",
-  properties: {
-    answers: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: { key: { type: "string" }, value: { type: "string" } },
-        required: ["key", "value"],
-      },
-    },
-  },
-  required: ["answers"],
-};
-
-/** Reads one session's conversation and returns the facts worth keeping (see
- * main/sessions.ts). Not streamed and not on the hot path — the user asks for
- * it from the History view when they're ready to review. */
-export async function extractAnswersWithOllama(
-  store: Store,
-  conversation: { role: string; content: string }[]
-): Promise<ExtraField[]> {
-  const host = store.settings.ollamaHost || DEFAULT_HOST;
-  const model = store.settings.ollamaModel || DEFAULT_MODEL;
-
-  const res = await fetch(`${host}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: buildAnswerExtractionPrompt(conversation) }],
-      stream: false,
-      format: ANSWERS_SCHEMA,
-      // A whole conversation is longer than this app's other one-shot
-      // prompts; the default context would cut off the earliest turns.
-      options: { num_ctx: 16384 },
-    }),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Ollama responded ${res.status}. ${detail}`.trim());
-  }
-
-  const body = await res.json();
-  return parseExtractedAnswers(body?.message?.content ?? "");
 }
 
 function friendlyOllamaError(err: unknown, host: string, model: string): string {

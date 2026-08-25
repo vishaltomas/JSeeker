@@ -4,17 +4,14 @@ import type {
   ChatMessage,
   ChatOptions,
   ChatSink,
-  ExtraField,
   ProgressSink,
   ResumeExtraction,
 } from "./types";
 import { RESUME_ANCHOR_KEYS, RESUME_STRUCTURE_KEYS, RESUME_STRUCTURE_SCHEMA_PROPERTIES } from "./types";
 import { claudeTools, createToolCache, MAX_TOOL_STEPS, runReportedTool } from "./toolDefs";
 import {
-  buildAnswerExtractionPrompt,
   buildResumeExtractionPrompt,
   buildSystemPrompt,
-  parseExtractedAnswers,
   parseResumeExtraction,
 } from "./prompts";
 
@@ -74,50 +71,6 @@ export async function parseResumeWithClaude(
   const block = response.content.find((b) => b.type === "text");
   if (!block || block.type !== "text") throw new Error("Claude returned no response.");
   return parseResumeExtraction(block.text);
-}
-
-/** Reads one session's conversation and returns the facts worth keeping (see
- * main/sessions.ts), using structured outputs so the result is always a
- * key/value list. */
-export async function extractAnswersWithClaude(
-  store: Store,
-  conversation: { role: string; content: string }[]
-): Promise<ExtraField[]> {
-  const apiKey = store.settings.anthropicApiKey;
-  if (!apiKey) throw new Error("No Claude API key set. Add one in Settings \u2192 Assistant.");
-  const model = store.settings.anthropicModel || DEFAULT_CLAUDE_MODEL;
-  const client = new Anthropic({ apiKey });
-
-  const response = await client.messages.create({
-    model,
-    max_tokens: 2048,
-    messages: [{ role: "user", content: buildAnswerExtractionPrompt(conversation) }],
-    output_config: {
-      format: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: {
-            answers: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: { key: { type: "string" }, value: { type: "string" } },
-                required: ["key", "value"],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["answers"],
-          additionalProperties: false,
-        },
-      },
-    },
-  });
-
-  const block = response.content.find((b) => b.type === "text");
-  if (!block || block.type !== "text") return [];
-  return parseExtractedAnswers(block.text);
 }
 
 // Streamed chat via the Claude API: same system prompt, but the system role

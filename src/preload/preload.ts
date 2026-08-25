@@ -62,30 +62,12 @@ interface PdfExportResult {
 }
 
 
-interface SessionArtifact {
-  id: string;
-  kind: "cover-letter" | "resume";
-  content: string;
-  createdAt: number;
-}
-
-interface ApplicationSession {
-  id: string;
-  url: string;
-  host: string;
-  title: string;
-  startedAt: number;
-  updatedAt: number;
-  messages: { role: "user" | "assistant"; content: string; at: number }[];
-  artifacts: SessionArtifact[];
-  answers: { key: string; value: string; saved: boolean }[];
-}
-
 interface ToolActivity {
   name: string;
   detail: string;
   status: "start" | "done" | "error";
   message?: string;
+  path?: string;
 }
 
 type OllamaStatus =
@@ -145,17 +127,6 @@ contextBridge.exposeInMainWorld("api", {
     pick: (): Promise<{ canceled?: boolean; name?: string; content?: string; error?: string }> =>
       ipcRenderer.invoke("builder:pick"),
   },
-  /** Application sessions recorded by the extension — see main/sessions.ts. */
-  sessions: {
-    list: (): Promise<ApplicationSession[]> => ipcRenderer.invoke("sessions:list"),
-    remove: (id: string): Promise<ApplicationSession[]> => ipcRenderer.invoke("sessions:delete", id),
-    extractAnswers: (
-      id: string
-    ): Promise<{ answers: { key: string; value: string }[]; error?: string }> =>
-      ipcRenderer.invoke("sessions:extractAnswers", id),
-    markAnswersSaved: (id: string, keys: string[]): Promise<ApplicationSession[]> =>
-      ipcRenderer.invoke("sessions:markAnswersSaved", { id, keys }),
-  },
   /** Renders a compiled resume document to PDF, prompting for a save
    * location. `name` seeds the suggested file name. */
   exportPdf: (html: string, name?: string): Promise<PdfExportResult> =>
@@ -175,8 +146,10 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("ollama:status:get"),
   startOllama: (): Promise<void> => ipcRenderer.invoke("ollama:start"),
   chat: {
-    send: (history: ChatMessage[]): void =>
-      ipcRenderer.send("chat:send", history),
+    /** `context` is the source of the document open in the editor, when there
+     * is one — the same channel the extension uses for the page it's on. */
+    send: (history: ChatMessage[], context?: string): void =>
+      ipcRenderer.send("chat:send", { history, context }),
     onDelta: (cb: (text: string) => void): void => {
       ipcRenderer.on("chat:delta", (_event, text: string) => cb(text));
     },

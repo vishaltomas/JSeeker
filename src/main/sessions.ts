@@ -1,4 +1,4 @@
-import { app, ipcMain } from "electron";
+import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import { randomUUID } from "crypto";
@@ -11,6 +11,11 @@ import { randomUUID } from "crypto";
  * every conversation and every drafted document. Mixing them would mean
  * rewriting every cover letter you've ever drafted each time you fix a typo
  * in your phone number.
+ *
+ * Nothing in the desktop UI reads this any more — it is written by the
+ * extension server as the user works a posting, and read back by the
+ * assistant's `search_applications` / `read_application` tools (see
+ * agents/tools.ts) when it needs to remember what was said on one.
  */
 
 /** One turn of the in-page conversation. */
@@ -29,19 +34,6 @@ export interface SessionArtifact {
   createdAt: number;
 }
 
-/** A question this application asked and the answer that was given, pulled
- * out of the conversation so it can be added to the profile and reused. The
- * point of the whole feature: answer "why do you want this role" once, and
- * have it available the next time a form asks. */
-export interface SessionAnswer {
-  key: string;
-  value: string;
-  /** Whether the user has accepted this into their profile. Kept so the
-   * History view can show what's already been reused rather than offering
-   * the same answer forever. */
-  saved: boolean;
-}
-
 export interface ApplicationSession {
   id: string;
   /** The posting's URL, normalized — the identity of the session. */
@@ -52,7 +44,6 @@ export interface ApplicationSession {
   updatedAt: number;
   messages: SessionMessage[];
   artifacts: SessionArtifact[];
-  answers: SessionAnswer[];
 }
 
 /** Sessions are cheap to keep and useful to look back on, but not unbounded
@@ -136,7 +127,6 @@ export function openSession(rawUrl: string, title: string): ApplicationSession {
     updatedAt: Date.now(),
     messages: [],
     artifacts: [],
-    answers: [],
   };
   all.unshift(session);
   if (all.length > MAX_SESSIONS) all.length = MAX_SESSIONS;
@@ -186,43 +176,3 @@ export function listSessions(): ApplicationSession[] {
 export function getSession(id: string): ApplicationSession | undefined {
   return load().find((s) => s.id === id);
 }
-
-/** Replaces a session's extracted answers, preserving the `saved` flag for
- * any the user has already accepted — re-running extraction shouldn't offer
- * back something they've already put in their profile. */
-export function setAnswers(id: string, answers: { key: string; value: string }[]): void {
-  const session = getSession(id);
-  if (!session) return;
-  const alreadySaved = new Set(session.answers.filter((a) => a.saved).map((a) => a.key));
-  session.answers = answers.map((a) => ({ ...a, saved: alreadySaved.has(a.key) }));
-  save();
-}
-
-export function markAnswersSaved(id: string, keys: string[]): void {
-  const session = getSession(id);
-  if (!session) return;
-  const accepted = new Set(keys);
-  for (const answer of session.answers) {
-    if (accepted.has(answer.key)) answer.saved = true;
-  }
-  save();
-}
-
-export function deleteSession(id: string): void {
-  const all = load();
-  const index = all.findIndex((s) => s.id === id);
-  if (index >= 0) {
-    all.splice(index, 1);
-    save();
-  }
-}
-
-ipcMain.handle("sessions:list", () => listSessions());
-ipcMain.handle("sessions:delete", (_event, id: string) => {
-  deleteSession(id);
-  return listSessions();
-});
-ipcMain.handle("sessions:markAnswersSaved", (_event, args: { id: string; keys: string[] }) => {
-  markAnswersSaved(args.id, args.keys);
-  return listSessions();
-});

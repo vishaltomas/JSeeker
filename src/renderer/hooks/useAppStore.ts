@@ -22,6 +22,7 @@ function emptyStore(): Store {
     builderFilePath: "",
     builderAutosave: true,
     builderAutoCompile: false,
+    builderChatOpen: true,
     builderFont: "georgia",
     builderAccent: "ink",
   };

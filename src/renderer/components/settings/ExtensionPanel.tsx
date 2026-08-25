@@ -51,8 +51,9 @@ export function ExtensionPanel({ store, persist }: ExtensionPanelProps) {
         → <code>chrome://extensions</code> → enable Developer mode → Load unpacked), then paste the
         token below into its options page. With JSeeker running, press <code>Alt+J</code> on any
         page — or click the extension's icon, or right-click → Ask JSeeker about this page — for a
-        floating chat panel: the same assistant as the Chat view, able to read the posting in front
-        of you. It only reads the page; it never fills or submits anything.
+        floating chat panel: the same assistant that sits beside the editor, able to read the
+        posting in front of you and draft a resume or cover letter from it, straight into your
+        workspace. It only reads the page; it never fills or submits anything.
       </p>
 
       <div className={fieldGroup}>

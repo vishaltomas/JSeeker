@@ -84,6 +84,10 @@ export interface Store {
   /** Whether the preview recompiles as you type. Off means it updates when
    * asked (the Compile button, or Ctrl+Enter). */
   builderAutoCompile: boolean;
+  /** Whether the editor's assistant dock is open. Persisted because it is a
+   * layout choice rather than a per-visit one — someone who works with the
+   * assistant open wants it open next time too. */
+  builderChatOpen: boolean;
   /** Which of the builder's typefaces the resume is set in — an id from
    * FONTS in resume_builder/fonts.ts. */
   builderFont: string;
@@ -117,6 +121,7 @@ function defaultStore(): Store {
     builderFilePath: "",
     builderAutosave: true,
     builderAutoCompile: false,
+    builderChatOpen: true,
     builderFont: DEFAULT_FONT,
     builderAccent: DEFAULT_ACCENT,
   };
@@ -188,6 +193,9 @@ export function loadStore(): Store {
     // has opted into it happening as they type.
     const builderAutosave = parsed.builderAutosave !== false;
     const builderAutoCompile = parsed.builderAutoCompile === true;
+    // Open unless it was explicitly closed — an assistant nobody can find is
+    // the same as no assistant.
+    const builderChatOpen = parsed.builderChatOpen !== false;
     const builderFont =
       typeof parsed.builderFont === "string" ? parsed.builderFont : DEFAULT_FONT;
     const builderAccent =
@@ -202,6 +210,7 @@ export function loadStore(): Store {
       builderFilePath,
       builderAutosave,
       builderAutoCompile,
+      builderChatOpen,
       builderFont,
       builderAccent,
     };

@@ -2,14 +2,16 @@ import type { Store } from "../main/store";
 import type { ExtraField, ResumeExtraction } from "./types";
 import { RESUME_ANCHOR_KEYS } from "./types";
 
-/** System prompt seeded with the profile so the model can help fill
- * applications. `pageContext` is the text of the page the user is looking at,
- * passed by the extension's in-page chat panel — with it the assistant can
- * answer about *this* posting ("does my background fit?", "draft an answer to
- * question 3") instead of being told about it second-hand. */
+/** System prompt seeded with the profile so the model can write the user's
+ * resumes and cover letters. `context` is whatever the user is looking at
+ * while they ask — the job posting, passed by the extension's in-page panel,
+ * or the `.resb` document open in the editor, passed by its assistant dock.
+ * Either way it lets the assistant answer about *this* one ("does my
+ * background fit?", "tighten the second bullet") rather than being told about
+ * it second-hand. */
 export function buildSystemPrompt(
   store: Store,
-  pageContext?: string,
+  context?: string,
   options: { tools?: boolean } = {}
 ): string {
   const lines = Object.entries(store.data)
@@ -17,9 +19,10 @@ export function buildSystemPrompt(
     .map(([key, value]) => `- ${key}: ${value}`);
   const profileText = lines.length ? lines.join("\n") : "(no info saved yet)";
   const prompt = [
-    "You are JSeeker's assistant, helping the user complete job applications.",
-    "Be concise and practical. Help draft and tailor answers to application questions,",
-    "and use the user's saved info below when it is relevant.",
+    "You are JSeeker's assistant. The app does one thing — resumes and cover letters — and",
+    "so do you: write them, tailor them to a posting, and rework the wording of one the user",
+    "already has. Be concise and practical, and use the user's saved info below when it is",
+    "relevant.",
     "",
     "The user's saved info:",
     profileText,
@@ -38,21 +41,26 @@ export function buildSystemPrompt(
       "before writing a resume, a cover letter, or any answer about their background,",
       "and never state experience you haven't read.",
       "Use `read_web_page` whenever the user gives you a link, rather than guessing at",
-      "what the posting says. Tools that write — `write_resume`, `write_cover_letter`,",
-      "`update_profile` — change the user's own files and profile, so use them when",
-      "asked to, not speculatively."
+      "what the posting says.",
+      "Documents are written in `.resb`, this app's own resume language, which you do not",
+      "know until you have read it — call `load_skill` before writing or editing one, every",
+      "time. `write_resume` and `write_cover_letter` put the result straight into the user's",
+      "editor, where they can see it compile; that is where a drafted document belongs, not",
+      "pasted into the chat. Tools that write — those two and `update_profile` — change the",
+      "user's own files and profile, so use them when asked to, not speculatively."
     );
   }
 
-  if (pageContext?.trim()) {
+  if (context?.trim()) {
     prompt.push(
       "",
-      "The user is currently on this page — usually the posting they're applying to.",
-      "Ground your answers in it, and say so if they ask about something it doesn't cover.",
+      "What the user is looking at right now — the posting they're applying to, or the",
+      "document open in their editor. Ground your answers in it, and say so if they ask",
+      "about something it doesn't cover.",
       "",
-      "--- page ---",
-      pageContext.trim(),
-      "--- end page ---"
+      "--- context ---",
+      context.trim(),
+      "--- end context ---"
     );
   }
 
@@ -121,68 +129,6 @@ export function buildDocumentPrompt(store: Store, kind: "cover-letter" | "resume
     "(most recent first, with bullets), education, and skills. Reorder and reword their real",
     "bullets to lead with what this posting cares about — selection and emphasis only.",
   ].join("\n");
-}
-
-/** Asks the model to pull reusable question/answer pairs out of one session's
- * conversation, so answers the user worked out once become part of the
- * profile. Keys are human-readable because they land in the same open bag the
- * Profile view edits by hand. */
-export function buildAnswerExtractionPrompt(
-  conversation: { role: string; content: string }[]
-): string {
-  const transcript = conversation
-    .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
-    .join("\n\n");
-
-  return [
-    "Below is a conversation between a job applicant and their assistant while applying for a",
-    "role. Pull out the facts about the applicant that would be worth reusing on the next",
-    "application — things an application form asks for that aren't already obvious contact",
-    "details: notice period, work authorization, salary expectations, why they want this kind of",
-    "role, how they'd describe a project, availability, and so on.",
-    "",
-    "--- conversation ---",
-    transcript,
-    "--- end conversation ---",
-    "",
-    "Give each one a short human-readable key (the question, roughly) and the applicant's answer",
-    "as the value. Take answers from what the applicant said about themselves, or from a draft",
-    "they accepted — not from the job posting, and not from the assistant's suggestions they",
-    "never confirmed. Return an empty list if nothing here is worth keeping.",
-  ].join("\n");
-}
-
-/** Parses the answer-extraction response into key/value pairs, tolerating a
- * bare array or an object wrapping one, and dropping anything malformed
- * rather than failing the batch — these are suggestions the user reviews, so
- * a partial result is still useful. */
-export function parseExtractedAnswers(content: string): ExtraField[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    return [];
-  }
-  const list = Array.isArray(parsed)
-    ? parsed
-    : Object.values(parsed as Record<string, unknown>).find(Array.isArray) ?? [];
-  if (!Array.isArray(list)) return [];
-
-  const answers: ExtraField[] = [];
-  const seen = new Set<string>();
-  for (const item of list) {
-    if (!item || typeof item !== "object") continue;
-    const { key, value } = item as { key?: unknown; value?: unknown };
-    if (typeof key !== "string" || typeof value !== "string") continue;
-    const trimmedKey = key.trim();
-    const trimmedValue = value.trim();
-    if (!trimmedKey || !trimmedValue) continue;
-    const dedupe = trimmedKey.toLowerCase();
-    if (seen.has(dedupe)) continue;
-    seen.add(dedupe);
-    answers.push({ key: trimmedKey, value: trimmedValue });
-  }
-  return answers;
 }
 
 /** Builds the onboarding prompt asking a model to extract a profile from one
